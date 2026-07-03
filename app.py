@@ -8,11 +8,23 @@ from io import BytesIO
 import qrcode
 from PIL import Image, ImageDraw, ImageFont
 
-APP_VERSION = "1.7 Cliente > Obra > Câmera"
+try:
+    import psycopg2
+    import psycopg2.extras
+except Exception:  # Ambiente local sem PostgreSQL instalado
+    psycopg2 = None
+
+APP_VERSION = "1.8 Banco Permanente Supabase"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(DATA_DIR, "7sense_cm.sqlite3"))
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USE_POSTGRES = bool(DATABASE_URL)
+
+# Supabase geralmente exige SSL. Se a URL não trouxer sslmode, adicionamos automaticamente.
+if USE_POSTGRES and "sslmode=" not in DATABASE_URL:
+    DATABASE_URL += ("&" if "?" in DATABASE_URL else "?") + "sslmode=require"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "7sense-dev-secret-change-me")
@@ -23,27 +35,78 @@ STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Em estoque", "Em tra
 STATUS_ATENCAO = ["Offline", "Em manutenção"]
 
 
+def _pg_sql(sql):
+    """Adapta SQL simples do SQLite para PostgreSQL sem mudar o restante do sistema."""
+    if not USE_POSTGRES:
+        return sql
+    sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+    sql = sql.replace("SELECT last_insert_rowid()", "SELECT lastval()")
+    sql = sql.replace("?", "%s")
+    return sql
+
+
 def db():
+    if USE_POSTGRES:
+        if psycopg2 is None:
+            raise RuntimeError("DATABASE_URL definido, mas psycopg2 não está instalado. Verifique requirements.txt")
+        return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     return con
 
 
 def execute(sql, params=()):
-    with db() as con:
+    con = db()
+    try:
+        if USE_POSTGRES:
+            cur = con.cursor()
+            cur.execute(_pg_sql(sql), params)
+            con.commit()
+            return cur
         cur = con.execute(sql, params)
         con.commit()
         return cur
+    except Exception:
+        try:
+            con.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
 
 
 def query(sql, params=()):
-    with db() as con:
+    con = db()
+    try:
+        if USE_POSTGRES:
+            cur = con.cursor()
+            cur.execute(_pg_sql(sql), params)
+            return cur.fetchall()
         return con.execute(sql, params).fetchall()
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
 
 
 def one(sql, params=()):
-    with db() as con:
+    con = db()
+    try:
+        if USE_POSTGRES:
+            cur = con.cursor()
+            cur.execute(_pg_sql(sql), params)
+            return cur.fetchone()
         return con.execute(sql, params).fetchone()
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
 
 
 def init_db():
@@ -62,11 +125,11 @@ def init_db():
     # Migração leve para versões antigas do SQLite: adiciona campos de teste/aprovação se ainda não existirem.
     try:
         execute("ALTER TABLE cameras ADD COLUMN tested_approved_at TEXT")
-    except sqlite3.OperationalError:
+    except Exception:
         pass
     try:
         execute("ALTER TABLE cameras ADD COLUMN tested_checklist TEXT")
-    except sqlite3.OperationalError:
+    except Exception:
         pass
     execute("""CREATE TABLE IF NOT EXISTS camera_history(
         id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id INTEGER, old_contract_id INTEGER, new_contract_id INTEGER, old_location TEXT, new_location TEXT, old_service TEXT, new_service TEXT, old_status TEXT, new_status TEXT, note TEXT, user_name TEXT, created_at TEXT
@@ -750,16 +813,17 @@ def load_demo():
     cam_num = 1
     for name, obra, city, st, qt, status in demo_contracts:
         execute("INSERT INTO clients(name,city,state,responsible,active,demo,created_at) VALUES(?,?,?,?,?,?,?)", (name, city, st, "Responsável teste", 1, 1, now))
-        cid = one("SELECT last_insert_rowid()")[0]
-        execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (contract_code(), cid, obra, city, st, date.today().isoformat(), (date.today()+timedelta(days=365)).isoformat(), qt, status, 1, now))
-        coid = one("SELECT last_insert_rowid()")[0]
+        cid = one("SELECT id FROM clients WHERE name=? AND city=? AND demo=1 AND created_at=? ORDER BY id DESC", (name, city, now))[0]
+        code_contract = contract_code()
+        execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (code_contract, cid, obra, city, st, date.today().isoformat(), (date.today()+timedelta(days=365)).isoformat(), qt, status, 1, now))
+        coid = one("SELECT id FROM contracts WHERE code=? ORDER BY id DESC", (code_contract,))[0]
         for i in range(qt):
             code = f"7S-CAM-{cam_num:03d}"
             cstatus = "Em operação"
             if cam_num in (6,): cstatus = "Offline"
             if cam_num in (10,): cstatus = "Em transporte"
             execute("INSERT INTO cameras(code,contract_id,current_location,service,status,demo,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?)", (code, coid, loc_cycle[i % len(loc_cycle)], service_cycle[i % len(service_cycle)], cstatus, 1, now, now))
-            cam_id = one("SELECT last_insert_rowid()")[0]
+            cam_id = one("SELECT id FROM cameras WHERE code=?", (code,))[0]
             if cstatus == "Offline":
                 execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,demo,created_at) VALUES(?,?,?,?,?,?,?)", (cam_id,"Sem comunicação","Câmera offline para demonstração","Aberta","João",1,now))
             cam_num += 1

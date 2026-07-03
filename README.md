@@ -1,19 +1,46 @@
-# 7Sense – Data into Action | Contract Manager v1.7
+# 7Sense – Data into Action | Contract Manager v1.8
 
-## Ajuste desta versão
+Versão com suporte a banco permanente PostgreSQL/Supabase.
 
-- Relação correta Cliente → Obra/Contrato → Câmera.
-- No cadastro/edição de câmera, agora existe um campo **Cliente**.
-- Ao escolher o cliente, o campo **Obra/Contrato** mostra somente obras daquele cliente.
-- Na lista de câmeras, agora aparece **Cliente / Obra** junto com a câmera.
-- A tela de transferência de câmera também filtra contratos por cliente.
+## O que mudou
 
-## Atualização no Render
+- Se existir a variável `DATABASE_URL`, o sistema usa PostgreSQL/Supabase.
+- Se `DATABASE_URL` não existir, continua usando SQLite local.
+- Mantém o fluxo de campo, QR Code, histórico, clientes, contratos e câmeras.
 
-1. Copie estes arquivos para a pasta local do GitHub `7sense-cm-cloud`.
-2. Substitua os arquivos antigos.
-3. No GitHub Desktop, faça commit:
-   `v1.7 cliente obra camera`
-4. Clique em **Push origin**.
-5. Aguarde o Render atualizar automaticamente.
+## Render
 
+Configure em Environment:
+
+```text
+DATABASE_URL=postgresql://postgres:SUA_SENHA@db.kegkupvivmjxedvmvvwx.supabase.co:5432/postgres
+```
+
+O sistema adiciona `sslmode=require` automaticamente quando necessário.
+
+## Login inicial
+
+Operação:
+
+```text
+marcos@7sense.local
+123456
+```
+
+Diretoria:
+
+```text
+diretoria@7sense.local
+123456
+```
+
+## Teste recomendado
+
+1. Faça commit e push desta versão.
+2. Aguarde o deploy no Render.
+3. Abra `/login`.
+4. Cadastre uma câmera nova, por exemplo `7S-CAM-300`.
+5. Leia o QR ou digite o código em `/campo`.
+6. Altere o status.
+7. Aguarde o Render reiniciar ou feche tudo.
+8. Abra novamente e confirme que a câmera continua cadastrada.
