@@ -5,7 +5,7 @@ from functools import wraps
 from flask import Flask, request, redirect, url_for, session, flash, jsonify, render_template_string
 from werkzeug.security import generate_password_hash, check_password_hash
 
-APP_VERSION = "1.4 Cloud"
+APP_VERSION = "1.4.1 Cloud"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -486,10 +486,10 @@ def campo():
             new_status = action
             new_loc = request.form.get("local") or camera["current_location"]
             execute("UPDATE cameras SET status=?, current_location=?, updated_at=? WHERE id=?", (new_status, new_loc, datetime.now().isoformat(), camera["id"]))
-            execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?)", (camera["id"], old_loc, new_loc, old_status, new_status, request.form.get("note"), "Campo", datetime.now().isoformat()))
+            execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], old_loc, new_loc, old_status, new_status, request.form.get("note"), "Campo", datetime.now().isoformat()))
             if action == "Offline" or request.form.get("problem"):
                 execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,notes,created_at) VALUES(?,?,?,?,?,?,?)", (camera["id"], "Problema registrado em campo", request.form.get("problem") or "Problema operacional", "Aberta", "Campo", request.form.get("note"), datetime.now().isoformat()))
-            msg = "Status atualizado com sucesso."
+            msg = f"Status atualizado para: {new_status}."
             camera = one("SELECT ca.*, co.obra, cl.name client_name FROM cameras ca LEFT JOIN contracts co ON co.id=ca.contract_id LEFT JOIN clients cl ON cl.id=co.client_id WHERE ca.id=?", (camera["id"],))
         elif not camera and code:
             msg = "Câmera não encontrada. Confira o código."
@@ -500,7 +500,7 @@ def campo():
 {% if msg %}<div class="card"><b>{{msg}}</b></div>{% endif %}
 <div class="card"><button type="button" id="startQr">📷 Ler QR Code</button><div id="reader" class="reader" style="display:none"></div><form method="post" id="lookup"><label>Código da câmera<input id="code" name="code" placeholder="7S-CAM-001" value="{{request.form.get('code','')}}"></label><button>Buscar câmera</button></form><p class="tag">Se a câmera do celular não abrir, digite o código manualmente.</p></div>
 {% if camera %}<div class="card"><h2>{{camera['code']}}</h2><p><span class="badge">{{camera['status']}}</span></p><p><b>Cliente:</b> {{camera['client_name'] or '-'}}</p><p><b>Obra:</b> {{camera['obra'] or '-'}}</p><p><b>Local:</b> {{camera['current_location'] or '-'}}</p><p><b>Serviço:</b> {{camera['service'] or '-'}}</p></div>
-<div class="card"><form method="post"><input type="hidden" name="code" value="{{camera['code']}}"><label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label><button name="action" value="Chegou na obra">📍 Chegou na obra</button><button name="action" value="Instalando" class="warn">🛠 Instalando</button><button name="action" value="Em operação">🟢 Ativar câmera</button><button name="action" value="Em transporte" class="secondary">🚚 Em transporte</button><button name="action" value="Retirada" class="secondary">↩️ Retirada</button><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="Offline" class="danger">🔴 Registrar problema</button></form></div>{% endif %}
+<div class="card"><form method="post"><input type="hidden" name="code" value="{{camera['code']}}"><label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label><p class="tag"><b>Atualizar status operacional</b></p><button name="action" value="Em transporte" class="secondary">🚚 Em transporte</button><button name="action" value="Chegou na obra">📍 Chegou na obra</button><button name="action" value="Instalando" class="warn">🛠 Instalando</button><button name="action" value="Em operação">🟢 Ativar câmera</button><button name="action" value="Retirada" class="secondary">↩️ Retirada</button><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="Offline" class="danger">🔴 Registrar problema</button></form></div>{% endif %}
 </div><script>let scanner=null;document.getElementById('startQr').addEventListener('click', async()=>{const r=document.getElementById('reader');r.style.display='block'; if(!window.Html5Qrcode){alert('Leitor QR não carregou. Digite o código manualmente.');return;} scanner=new Html5Qrcode('reader'); try{await scanner.start({facingMode:'environment'},{fps:10,qrbox:220}, txt=>{document.getElementById('code').value=txt.trim(); scanner.stop(); document.getElementById('lookup').submit();});}catch(e){alert('Não foi possível abrir a câmera. Verifique HTTPS/permissão ou digite o código manualmente.');}});</script>
 </body></html>
 """, camera=camera, msg=msg)
