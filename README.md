@@ -27,3 +27,8 @@ Depois de substituir os arquivos no repositório:
 
 - Admin: `/login`
 - Campo: `/campo`
+
+
+## v1.5.1
+- Corrige fluxo de campo para reiniciar quando câmera estiver com status Em estoque.
+- Evita que histórico antigo deixe botões verdes em novos testes ou novas implantações.

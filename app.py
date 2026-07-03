@@ -507,11 +507,17 @@ def campo():
         # Descobre a maior etapa já registrada no histórico ou no status atual.
         hist_statuses = query("SELECT new_status FROM camera_history WHERE camera_id=?", (camera["id"],))
         max_done = -1
-        if camera["status"] in workflow:
+        # Regra v1.5.1: se a câmera estiver em estoque, o fluxo de campo reinicia.
+        # Isso permite reutilizar uma câmera ou testar um QR sem herdar etapas antigas.
+        if camera["status"] == "Em estoque":
+            max_done = -1
+        elif camera["status"] in workflow:
             max_done = max(max_done, workflow.index(camera["status"]))
-        for hs in hist_statuses:
-            if hs["new_status"] in workflow:
-                max_done = max(max_done, workflow.index(hs["new_status"]))
+        else:
+            # Para status fora do fluxo, preserva a etapa mais avançada já realizada.
+            for hs in hist_statuses:
+                if hs["new_status"] in workflow:
+                    max_done = max(max_done, workflow.index(hs["new_status"]))
         next_step = workflow[max_done + 1] if max_done + 1 < len(workflow) else None
 
         if action == "PROBLEMA":
@@ -543,11 +549,17 @@ def campo():
         }
         hist_statuses = query("SELECT new_status FROM camera_history WHERE camera_id=?", (camera["id"],))
         max_done = -1
-        if camera["status"] in workflow:
+        # Regra v1.5.1: se a câmera estiver em estoque, o fluxo de campo reinicia.
+        # Isso permite reutilizar uma câmera ou testar um QR sem herdar etapas antigas.
+        if camera["status"] == "Em estoque":
+            max_done = -1
+        elif camera["status"] in workflow:
             max_done = max(max_done, workflow.index(camera["status"]))
-        for hs in hist_statuses:
-            if hs["new_status"] in workflow:
-                max_done = max(max_done, workflow.index(hs["new_status"]))
+        else:
+            # Para status fora do fluxo, preserva a etapa mais avançada já realizada.
+            for hs in hist_statuses:
+                if hs["new_status"] in workflow:
+                    max_done = max(max_done, workflow.index(hs["new_status"]))
         next_step = workflow[max_done + 1] if max_done + 1 < len(workflow) else None
         btns = []
         for idx, step in enumerate(workflow):
