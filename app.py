@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "1.9.2 Supabase ativo + foto instalação + visão hierárquica"
+APP_VERSION = "1.9.3 Correção PostgreSQL + visão hierárquica"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -185,9 +185,22 @@ def operacao_required(f):
     return wrap
 
 
+def scalar(row, default=None):
+    """Retorna o primeiro valor de uma linha, compatível com sqlite.Row e dict_row do PostgreSQL."""
+    if not row:
+        return default
+    try:
+        return row[0]
+    except Exception:
+        try:
+            return next(iter(row.values()))
+        except Exception:
+            return default
+
+
 def count(sql, params=()):
     r = one(sql, params)
-    return r[0] if r else 0
+    return scalar(r, 0)
 
 
 def contract_code():
@@ -884,17 +897,17 @@ def load_demo():
     cam_num = 1
     for name, obra, city, st, qt, status in demo_contracts:
         execute("INSERT INTO clients(name,city,state,responsible,active,demo,created_at) VALUES(?,?,?,?,?,?,?)", (name, city, st, "Responsável teste", 1, 1, now))
-        cid = one("SELECT id FROM clients WHERE name=? AND city=? AND demo=1 AND created_at=? ORDER BY id DESC", (name, city, now))[0]
+        cid = scalar(one("SELECT id FROM clients WHERE name=? AND city=? AND demo=1 AND created_at=? ORDER BY id DESC", (name, city, now)))
         code_contract = contract_code()
         execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (code_contract, cid, obra, city, st, date.today().isoformat(), (date.today()+timedelta(days=365)).isoformat(), qt, status, 1, now))
-        coid = one("SELECT id FROM contracts WHERE code=? ORDER BY id DESC", (code_contract,))[0]
+        coid = scalar(one("SELECT id FROM contracts WHERE code=? ORDER BY id DESC", (code_contract,)))
         for i in range(qt):
             code = f"7S-CAM-{cam_num:03d}"
             cstatus = "Em operação"
             if cam_num in (6,): cstatus = "Offline"
             if cam_num in (10,): cstatus = "Em transporte"
             execute("INSERT INTO cameras(code,contract_id,current_location,service,status,demo,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?)", (code, coid, loc_cycle[i % len(loc_cycle)], service_cycle[i % len(service_cycle)], cstatus, 1, now, now))
-            cam_id = one("SELECT id FROM cameras WHERE code=?", (code,))[0]
+            cam_id = scalar(one("SELECT id FROM cameras WHERE code=?", (code,)))
             if cstatus == "Offline":
                 execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,demo,created_at) VALUES(?,?,?,?,?,?,?)", (cam_id,"Sem comunicação","Câmera offline para demonstração","Aberta","João",1,now))
             cam_num += 1
