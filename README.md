@@ -1,41 +1,29 @@
-# 7Sense – Data into Action | Contract Manager Cloud
+# 7Sense CM Cloud v1.5 Campo
 
-Versão cloud inicial para homologação no Render.
+Versão com fluxo operacional sequencial no módulo `/campo`.
 
-## Rodar localmente
+## Novidades
 
-```bash
-pip install -r requirements.txt
-python app.py
-```
+- Etapas do campo em ordem obrigatória:
+  1. Em transporte
+  2. Chegou na obra
+  3. Instalando
+  4. Ativar câmera
+  5. Retirada
+- Etapas concluídas ficam verdes e desabilitadas.
+- Somente a próxima etapa fica liberada.
+- Registrar problema fica sempre disponível.
+- Histórico recente da câmera exibido no celular.
 
-Abra: http://127.0.0.1:5000
+## Deploy no Render
 
-## Acessos
+Depois de substituir os arquivos no repositório:
 
-Operação:
-- usuário: `marcos@7sense.local`
-- senha: `123456`
-
-Diretoria:
-- usuário: `diretoria@7sense.local`
-- senha: `123456`
-
-## Render
-
-Build Command:
-```bash
-pip install -r requirements.txt
-```
-
-Start Command:
-```bash
-gunicorn app:app
-```
+1. Commit: `Fluxo sequencial do campo v1.5`
+2. Push origin
+3. O Render atualiza automaticamente.
 
 ## Links
 
-- Painel: `/app`
-- Campo público: `/campo`
-
-O leitor de QR Code no celular requer HTTPS. No Render isso já vem habilitado.
+- Admin: `/login`
+- Campo: `/campo`

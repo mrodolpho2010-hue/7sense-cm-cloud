@@ -5,7 +5,7 @@ from functools import wraps
 from flask import Flask, request, redirect, url_for, session, flash, jsonify, render_template_string
 from werkzeug.security import generate_password_hash, check_password_hash
 
-APP_VERSION = "1.4.1 Cloud"
+APP_VERSION = "1.5 Campo"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -477,33 +477,104 @@ def search():
 def campo():
     msg = ""
     camera = None
-    if request.method == "POST":
-        code = request.form.get("code", "").strip().upper()
-        camera = one("SELECT ca.*, co.obra, cl.name client_name FROM cameras ca LEFT JOIN contracts co ON co.id=ca.contract_id LEFT JOIN clients cl ON cl.id=co.client_id WHERE UPPER(ca.code)=?", (code,))
-        action = request.form.get("action")
-        if camera and action:
-            old_status, old_loc = camera["status"], camera["current_location"]
-            new_status = action
-            new_loc = request.form.get("local") or camera["current_location"]
-            execute("UPDATE cameras SET status=?, current_location=?, updated_at=? WHERE id=?", (new_status, new_loc, datetime.now().isoformat(), camera["id"]))
-            execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], old_loc, new_loc, old_status, new_status, request.form.get("note"), "Campo", datetime.now().isoformat()))
-            if action == "Offline" or request.form.get("problem"):
-                execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,notes,created_at) VALUES(?,?,?,?,?,?,?)", (camera["id"], "Problema registrado em campo", request.form.get("problem") or "Problema operacional", "Aberta", "Campo", request.form.get("note"), datetime.now().isoformat()))
-            msg = f"Status atualizado para: {new_status}."
-            camera = one("SELECT ca.*, co.obra, cl.name client_name FROM cameras ca LEFT JOIN contracts co ON co.id=ca.contract_id LEFT JOIN clients cl ON cl.id=co.client_id WHERE ca.id=?", (camera["id"],))
-        elif not camera and code:
+    history = []
+    buttons_html = ""
+    code = request.form.get("code", "").strip().upper() if request.method == "POST" else request.args.get("code", "").strip().upper()
+
+    def load_camera_by_code(camera_code):
+        return one("""SELECT ca.*, co.obra, cl.name client_name
+                    FROM cameras ca
+                    LEFT JOIN contracts co ON co.id=ca.contract_id
+                    LEFT JOIN clients cl ON cl.id=co.client_id
+                    WHERE UPPER(ca.code)=?""", (camera_code,))
+
+    if code:
+        camera = load_camera_by_code(code)
+        if not camera:
             msg = "Câmera não encontrada. Confira o código."
+
+    if request.method == "POST" and camera:
+        action = request.form.get("action")
+        workflow = ["Em transporte", "Chegou na obra", "Instalando", "Em operação", "Retirada"]
+        action_labels = {
+            "Em transporte": "🚚 Em transporte",
+            "Chegou na obra": "📍 Chegou na obra",
+            "Instalando": "🛠 Instalando",
+            "Em operação": "🟢 Ativar câmera",
+            "Retirada": "↩️ Retirada",
+        }
+
+        # Descobre a maior etapa já registrada no histórico ou no status atual.
+        hist_statuses = query("SELECT new_status FROM camera_history WHERE camera_id=?", (camera["id"],))
+        max_done = -1
+        if camera["status"] in workflow:
+            max_done = max(max_done, workflow.index(camera["status"]))
+        for hs in hist_statuses:
+            if hs["new_status"] in workflow:
+                max_done = max(max_done, workflow.index(hs["new_status"]))
+        next_step = workflow[max_done + 1] if max_done + 1 < len(workflow) else None
+
+        if action == "PROBLEMA":
+            problem = request.form.get("problem") or "Problema operacional"
+            note = request.form.get("note") or ""
+            execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,notes,created_at) VALUES(?,?,?,?,?,?,?)", (camera["id"], "Problema registrado em campo", problem, "Aberta", "Campo", note, datetime.now().isoformat()))
+            execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], camera["current_location"], camera["current_location"], camera["status"], "Problema registrado", problem + (" - " + note if note else ""), "Campo", datetime.now().isoformat()))
+            msg = "Problema registrado. A ocorrência foi aberta no painel."
+        elif action in workflow:
+            if action != next_step:
+                msg = "Esta etapa já foi realizada ou está fora de ordem. Leia o QR Code novamente e siga a próxima etapa liberada."
+            else:
+                old_status, old_loc = camera["status"], camera["current_location"]
+                new_loc = request.form.get("local") or camera["current_location"]
+                note = request.form.get("note") or ""
+                execute("UPDATE cameras SET status=?, current_location=?, updated_at=? WHERE id=?", (action, new_loc, datetime.now().isoformat(), camera["id"]))
+                execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], old_loc, new_loc, old_status, action, note, "Campo", datetime.now().isoformat()))
+                msg = f"Etapa registrada: {action_labels[action]}."
+        camera = load_camera_by_code(code)
+
+    if camera:
+        workflow = ["Em transporte", "Chegou na obra", "Instalando", "Em operação", "Retirada"]
+        action_labels = {
+            "Em transporte": "🚚 Em transporte",
+            "Chegou na obra": "📍 Chegou na obra",
+            "Instalando": "🛠 Instalando",
+            "Em operação": "🟢 Ativar câmera",
+            "Retirada": "↩️ Retirada",
+        }
+        hist_statuses = query("SELECT new_status FROM camera_history WHERE camera_id=?", (camera["id"],))
+        max_done = -1
+        if camera["status"] in workflow:
+            max_done = max(max_done, workflow.index(camera["status"]))
+        for hs in hist_statuses:
+            if hs["new_status"] in workflow:
+                max_done = max(max_done, workflow.index(hs["new_status"]))
+        next_step = workflow[max_done + 1] if max_done + 1 < len(workflow) else None
+        btns = []
+        for idx, step in enumerate(workflow):
+            label = action_labels[step]
+            if idx <= max_done:
+                btns.append(f'<button type="button" class="done" disabled>✅ {label}</button>')
+            elif step == next_step:
+                btns.append(f'<button name="action" value="{step}" class="active-step">{label}</button>')
+            else:
+                btns.append(f'<button type="button" class="locked" disabled>🔒 {label}</button>')
+        buttons_html = "".join(btns)
+        history = query("SELECT * FROM camera_history WHERE camera_id=? ORDER BY created_at DESC LIMIT 12", (camera["id"],))
+
     return render_template_string(r"""
 <!doctype html><html lang="pt-br"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>7Sense Campo</title>
-<style>body{font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;color:#0f172a;margin:0}.wrap{max-width:560px;margin:0 auto;padding:18px}.card{background:#fff;border:1px solid #dbe3ef;border-radius:18px;padding:18px;margin:12px 0}.hero{font-size:24px;font-weight:800}.tag{color:#64748b}input,textarea{width:100%;border:1px solid #dbe3ef;border-radius:12px;padding:13px;font-size:18px;margin:6px 0 12px}.btn,button{display:block;width:100%;border:0;border-radius:14px;padding:16px;margin:8px 0;background:#0f5fff;color:#fff;font-size:18px;font-weight:700}.btn.secondary{background:#fff;color:#0f172a;border:1px solid #dbe3ef}.btn.danger{background:#dc2626}.btn.warn{background:#d97706}.badge{display:inline-block;border-radius:999px;padding:6px 10px;background:#e5e7eb}.reader{border:2px dashed #dbe3ef;border-radius:18px;padding:12px}#reader{width:100%;min-height:220px}</style>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;color:#0f172a;margin:0}.wrap{max-width:560px;margin:0 auto;padding:18px}.card{background:#fff;border:1px solid #dbe3ef;border-radius:18px;padding:18px;margin:12px 0}.hero{font-size:24px;font-weight:800}.tag{color:#64748b}.small{font-size:13px;color:#64748b}input,textarea{width:100%;border:1px solid #dbe3ef;border-radius:12px;padding:13px;font-size:18px;margin:6px 0 12px}textarea{min-height:80px}.btn,button{display:block;width:100%;border:0;border-radius:14px;padding:16px;margin:8px 0;background:#0f5fff;color:#fff;font-size:18px;font-weight:700}.btn.secondary{background:#fff;color:#0f172a;border:1px solid #dbe3ef}.danger{background:#dc2626!important}.done{background:#16a34a!important;color:#fff;opacity:.95}.active-step{background:#0f5fff!important;color:#fff}.locked{background:#e5e7eb!important;color:#64748b!important}.badge{display:inline-block;border-radius:999px;padding:6px 10px;background:#e5e7eb}.reader{border:2px dashed #dbe3ef;border-radius:18px;padding:12px}#reader{width:100%;min-height:220px}.timeline{border-left:3px solid #dbe3ef;margin-left:6px;padding-left:12px}.timeline-item{padding:8px 0;border-bottom:1px solid #eef2f7}
+</style>
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script></head><body><div class="wrap"><div class="card"><div class="hero">7Sense Campo</div><div class="tag">Leitura de QR Code e status operacional da câmera.</div></div>
 {% if msg %}<div class="card"><b>{{msg}}</b></div>{% endif %}
-<div class="card"><button type="button" id="startQr">📷 Ler QR Code</button><div id="reader" class="reader" style="display:none"></div><form method="post" id="lookup"><label>Código da câmera<input id="code" name="code" placeholder="7S-CAM-001" value="{{request.form.get('code','')}}"></label><button>Buscar câmera</button></form><p class="tag">Se a câmera do celular não abrir, digite o código manualmente.</p></div>
-{% if camera %}<div class="card"><h2>{{camera['code']}}</h2><p><span class="badge">{{camera['status']}}</span></p><p><b>Cliente:</b> {{camera['client_name'] or '-'}}</p><p><b>Obra:</b> {{camera['obra'] or '-'}}</p><p><b>Local:</b> {{camera['current_location'] or '-'}}</p><p><b>Serviço:</b> {{camera['service'] or '-'}}</p></div>
-<div class="card"><form method="post"><input type="hidden" name="code" value="{{camera['code']}}"><label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label><p class="tag"><b>Atualizar status operacional</b></p><button name="action" value="Em transporte" class="secondary">🚚 Em transporte</button><button name="action" value="Chegou na obra">📍 Chegou na obra</button><button name="action" value="Instalando" class="warn">🛠 Instalando</button><button name="action" value="Em operação">🟢 Ativar câmera</button><button name="action" value="Retirada" class="secondary">↩️ Retirada</button><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="Offline" class="danger">🔴 Registrar problema</button></form></div>{% endif %}
+<div class="card"><button type="button" id="startQr">📷 Ler QR Code</button><div id="reader" class="reader" style="display:none"></div><form method="post" id="lookup"><label>Código da câmera<input id="code" name="code" placeholder="7S-CAM-001" value="{{request.form.get('code','') or request.args.get('code','')}}"></label><button>Buscar câmera</button></form><p class="tag">Se a câmera do celular não abrir, digite o código manualmente.</p></div>
+{% if camera %}<div class="card"><h2>{{camera['code']}}</h2><p><span class="badge">Status atual: {{camera['status']}}</span></p><p><b>Cliente:</b> {{camera['client_name'] or '-'}}</p><p><b>Obra:</b> {{camera['obra'] or '-'}}</p><p><b>Local:</b> {{camera['current_location'] or '-'}}</p><p><b>Serviço:</b> {{camera['service'] or '-'}}</p></div>
+<div class="card"><form method="post"><input type="hidden" name="code" value="{{camera['code']}}"><label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label><p class="tag"><b>Fluxo operacional</b></p><p class="small">Etapas concluídas ficam verdes e bloqueadas. Somente a próxima etapa fica liberada.</p>{{buttons_html|safe}}<hr style="border:0;border-top:1px solid #eef2f7;margin:18px 0"><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="PROBLEMA" class="danger">🔴 Registrar problema</button></form></div>
+<div class="card"><h3>Histórico recente</h3><div class="timeline">{% for h in history %}<div class="timeline-item"><b>{{h['new_status']}}</b><br><span class="small">{{h['created_at'][:16].replace('T',' ')}} · {{h['user_name'] or 'Campo'}}</span><br><span class="small">{{h['note'] or ''}}</span></div>{% else %}<p class="tag">Sem histórico ainda.</p>{% endfor %}</div></div>{% endif %}
 </div><script>let scanner=null;document.getElementById('startQr').addEventListener('click', async()=>{const r=document.getElementById('reader');r.style.display='block'; if(!window.Html5Qrcode){alert('Leitor QR não carregou. Digite o código manualmente.');return;} scanner=new Html5Qrcode('reader'); try{await scanner.start({facingMode:'environment'},{fps:10,qrbox:220}, txt=>{document.getElementById('code').value=txt.trim(); scanner.stop(); document.getElementById('lookup').submit();});}catch(e){alert('Não foi possível abrir a câmera. Verifique HTTPS/permissão ou digite o código manualmente.');}});</script>
 </body></html>
-""", camera=camera, msg=msg)
+""", camera=camera, msg=msg, buttons_html=buttons_html, history=history)
 
 
 @app.route("/demo/load")
