@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "1.9.3 Correção PostgreSQL + visão hierárquica"
+APP_VERSION = "1.9.4 Correção modo demonstração"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -880,40 +880,56 @@ body{font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;color:#0f172a;mar
 """, camera=camera, msg=msg, buttons_html=buttons_html, history=history, next_step=next_step if camera else None)
 
 
+def next_free_demo_camera_code(start=900):
+    """Gera código demo sem conflitar com câmeras reais já cadastradas no banco permanente."""
+    n = start
+    while one("SELECT id FROM cameras WHERE code=?", (f"7S-DEMO-CAM-{n:03d}",)):
+        n += 1
+    return n
+
+
 @app.route("/demo/load")
 @operacao_required
 def load_demo():
+    # Limpa apenas dados demo. Dados reais do Supabase não são apagados.
     clear_demo_data()
     now = datetime.now().isoformat()
     demo_contracts = [
-        ("Toyota", "Toyota Sorocaba", "Sorocaba", "SP", 10, "Operação"),
-        ("Equinix", "Tamboré", "Barueri", "SP", 5, "Operação"),
-        ("Microsoft", "Hortolândia", "Hortolândia", "SP", 6, "Implantação"),
-        ("Zortea", "Itaituba", "Itaituba", "PA", 3, "Planejamento"),
-        ("Afonso França", "Hangar Guarulhos", "Guarulhos", "SP", 4, "Manutenção"),
+        ("Toyota DEMO", "Toyota Sorocaba", "Sorocaba", "SP", 10, "Operação"),
+        ("Equinix DEMO", "Tamboré", "Barueri", "SP", 5, "Operação"),
+        ("Microsoft DEMO", "Hortolândia", "Hortolândia", "SP", 6, "Implantação"),
+        ("Zortea DEMO", "Itaituba", "Itaituba", "PA", 3, "Planejamento"),
+        ("Afonso França DEMO", "Hangar Guarulhos", "Guarulhos", "SP", 4, "Manutenção"),
     ]
     service_cycle = ["Acompanhamento de Valas","Acompanhamento de Valas","Timelapse","Timelapse","IA Segurança","IA Segurança","Controle de Pessoas","IA BIM","IA BIM","Timelapse"]
     loc_cycle = ["Retro 01","Retro 01","Torre Norte","Torre Sul","Portaria","Almoxarifado","Entrada","Frente de Obra","Vala 03","Canteiro"]
-    cam_num = 1
-    for name, obra, city, st, qt, status in demo_contracts:
-        execute("INSERT INTO clients(name,city,state,responsible,active,demo,created_at) VALUES(?,?,?,?,?,?,?)", (name, city, st, "Responsável teste", 1, 1, now))
-        cid = scalar(one("SELECT id FROM clients WHERE name=? AND city=? AND demo=1 AND created_at=? ORDER BY id DESC", (name, city, now)))
-        code_contract = contract_code()
-        execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (code_contract, cid, obra, city, st, date.today().isoformat(), (date.today()+timedelta(days=365)).isoformat(), qt, status, 1, now))
-        coid = scalar(one("SELECT id FROM contracts WHERE code=? ORDER BY id DESC", (code_contract,)))
-        for i in range(qt):
-            code = f"7S-CAM-{cam_num:03d}"
-            cstatus = "Em operação"
-            if cam_num in (6,): cstatus = "Offline"
-            if cam_num in (10,): cstatus = "Em transporte"
-            execute("INSERT INTO cameras(code,contract_id,current_location,service,status,demo,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?)", (code, coid, loc_cycle[i % len(loc_cycle)], service_cycle[i % len(service_cycle)], cstatus, 1, now, now))
-            cam_id = scalar(one("SELECT id FROM cameras WHERE code=?", (code,)))
-            if cstatus == "Offline":
-                execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,demo,created_at) VALUES(?,?,?,?,?,?,?)", (cam_id,"Sem comunicação","Câmera offline para demonstração","Aberta","João",1,now))
-            cam_num += 1
-    execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Instalação Microsoft", date.today().isoformat(), "09:00", "Demonstração", 1, now))
-    execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Visita Equinix", date.today().isoformat(), "14:00", "Demonstração", 1, now))
-    flash("Dados de demonstração carregados.")
+    cam_num = next_free_demo_camera_code()
+    try:
+        for name, obra, city, st, qt, status in demo_contracts:
+            execute("INSERT INTO clients(name,city,state,responsible,active,demo,created_at) VALUES(?,?,?,?,?,?,?)", (name, city, st, "Responsável teste", 1, 1, now))
+            cid = scalar(one("SELECT id FROM clients WHERE name=? AND city=? AND demo=1 AND created_at=? ORDER BY id DESC", (name, city, now)))
+            code_contract = contract_code()
+            execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (code_contract, cid, obra, city, st, date.today().isoformat(), (date.today()+timedelta(days=365)).isoformat(), qt, status, 1, now))
+            coid = scalar(one("SELECT id FROM contracts WHERE code=? ORDER BY id DESC", (code_contract,)))
+            for i in range(qt):
+                while one("SELECT id FROM cameras WHERE code=?", (f"7S-DEMO-CAM-{cam_num:03d}",)):
+                    cam_num += 1
+                code = f"7S-DEMO-CAM-{cam_num:03d}"
+                cstatus = "Em operação"
+                if i == 5 and name.startswith("Toyota"):
+                    cstatus = "Offline"
+                if i == 9 and name.startswith("Toyota"):
+                    cstatus = "Em transporte"
+                execute("INSERT INTO cameras(code,contract_id,current_location,service,status,demo,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?)", (code, coid, loc_cycle[i % len(loc_cycle)], service_cycle[i % len(service_cycle)], cstatus, 1, now, now))
+                cam_id = scalar(one("SELECT id FROM cameras WHERE code=?", (code,)))
+                if cstatus == "Offline":
+                    execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,demo,created_at) VALUES(?,?,?,?,?,?,?)", (cam_id,"Sem comunicação","Câmera offline para demonstração","Aberta","João",1,now))
+                cam_num += 1
+        execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Instalação Microsoft", date.today().isoformat(), "09:00", "Demonstração", 1, now))
+        execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Visita Equinix", date.today().isoformat(), "14:00", "Demonstração", 1, now))
+        flash("Dados de demonstração carregados sem alterar dados reais.")
+    except Exception as e:
+        flash(f"Erro ao carregar demonstração: {e}")
     return redirect(url_for("dashboard"))
 
 

@@ -1,5 +1,6 @@
-# 7Sense CM Cloud v1.9.3
+# 7Sense CM Cloud v1.9.4
 
-Correção para PostgreSQL/Supabase: suporte a retorno dict_row nas consultas COUNT/id.
-
-Atualize copiando os arquivos, commit e push.
+Correções:
+- Modo demonstração compatível com banco permanente Supabase/PostgreSQL.
+- Dados demo usam códigos 7S-DEMO-CAM-900+ para não conflitar com câmeras reais.
+- Limpa apenas dados demo, preservando dados reais.
