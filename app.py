@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "1.9.4 Correção modo demonstração"
+APP_VERSION = "1.9.6 Operação oficial e demonstração separada"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -146,8 +146,19 @@ def init_db():
     except Exception:
         pass
     execute("""CREATE TABLE IF NOT EXISTS occurrences(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id INTEGER, title TEXT, problem TEXT, status TEXT, responsible TEXT, notes TEXT, demo INTEGER DEFAULT 0, created_at TEXT, closed_at TEXT
+        id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id INTEGER, title TEXT, problem TEXT, status TEXT, responsible TEXT, notes TEXT, demo INTEGER DEFAULT 0, created_at TEXT, closed_at TEXT, archived_at TEXT, archived_contract_id INTEGER, archived_location TEXT
     )""")
+    # V1.9.5: arquivamento de ocorrências por ciclo operacional da câmera.
+    # Ao retirar a câmera de uma obra, as ocorrências saem da visão ativa e ficam preservadas no histórico.
+    for col in [
+        "archived_at TEXT",
+        "archived_contract_id INTEGER",
+        "archived_location TEXT",
+    ]:
+        try:
+            execute(f"ALTER TABLE occurrences ADD COLUMN {col}")
+        except Exception:
+            pass
     execute("""CREATE TABLE IF NOT EXISTS agenda(
         id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, event_date TEXT, event_time TEXT, contract_id INTEGER, notes TEXT, demo INTEGER DEFAULT 0, created_at TEXT
     )""")
@@ -235,6 +246,24 @@ def rv(row, key, default=""):
         return default
 
 
+def is_demo_mode():
+    """Modo visual/operacional atual. Por padrão é sempre Operação Oficial."""
+    return session.get("data_mode") == "demo"
+
+
+def current_demo_flag():
+    return 1 if is_demo_mode() else 0
+
+
+def mode_label():
+    return "DEMONSTRAÇÃO" if is_demo_mode() else "OPERAÇÃO OFICIAL"
+
+
+def demo_where(alias=None):
+    prefix = f"{alias}." if alias else ""
+    return f"{prefix}demo=?", (current_demo_flag(),)
+
+
 BASE = r"""
 <!doctype html><html lang="pt-br"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>7Sense CM</title>
@@ -245,7 +274,7 @@ BASE = r"""
 </head><body><div class="wrap">
 <div class="top"><div><div class="brand">7Sense – Data into Action</div><div class="tag">Contract Manager {{version}}</div></div>
 <div class="nav"><a href="{{url_for('dashboard')}}">🏠 Dashboard</a><a href="{{url_for('clients')}}">Clientes</a><a href="{{url_for('contracts')}}">Contratos</a><a href="{{url_for('cameras')}}">Câmeras</a><a href="{{url_for('occurrences')}}">Ocorrências</a><a href="{{url_for('agenda_page')}}">Agenda</a><a href="{{url_for('campo')}}">📱 Campo</a>{% if user %}<a href="{{url_for('logout')}}">Sair</a>{% endif %}</div></div>
-{% if user %}<div class="breadcrumb">{{breadcrumb or 'Dashboard'}} · {{user['name']}} · Perfil: {{user['role']}}</div>{% endif %}
+{% if user %}<div class="breadcrumb">{{breadcrumb or 'Dashboard'}} · {{user['name']}} · Perfil: {{user['role']}} · Modo: {{mode_label}}</div>{% endif %}{% if demo_mode %}<div class="flash" style="background:#fef3c7;border-color:#f59e0b"><b>🟡 MODO DEMONSTRAÇÃO</b> — usando dados separados de teste. QR Codes demo usam prefixo <b>7S-DEMO-CAM</b> e não conflitam com as câmeras oficiais.</div>{% endif %}
 {% with messages = get_flashed_messages() %}{% if messages %}{% for m in messages %}<div class="flash">{{m}}</div>{% endfor %}{% endif %}{% endwith %}
 {{body|safe}}
 </div></body></html>
@@ -253,7 +282,7 @@ BASE = r"""
 
 
 def page(body, breadcrumb="Dashboard", **ctx):
-    return render_template_string(BASE, body=body, user=current_user(), version=APP_VERSION, breadcrumb=breadcrumb, **ctx)
+    return render_template_string(BASE, body=body, user=current_user(), version=APP_VERSION, breadcrumb=breadcrumb, mode_label=mode_label(), demo_mode=is_demo_mode(), **ctx)
 
 
 @app.route("/")
@@ -267,6 +296,7 @@ def login():
         u = one("SELECT * FROM users WHERE email=? AND active=1", (request.form.get("email", "").strip(),))
         if u and check_password_hash(u["password_hash"], request.form.get("password", "")):
             session["user_id"] = u["id"]
+            session["data_mode"] = "official"
             return redirect(url_for("dashboard"))
         flash("Usuário ou senha inválidos.")
     body = """
@@ -286,12 +316,13 @@ def logout():
 @app.route("/app")
 @login_required
 def dashboard():
-    contracts_active = count("SELECT COUNT(*) FROM contracts WHERE status!='Encerrado'")
-    cams = count("SELECT COUNT(*) FROM cameras")
-    attention = count("SELECT COUNT(*) FROM cameras WHERE status IN ('Offline','Em manutenção')")
-    occ_open = count("SELECT COUNT(*) FROM occurrences WHERE status IN ('Aberta','Em andamento')")
+    df = current_demo_flag()
+    contracts_active = count("SELECT COUNT(*) FROM contracts WHERE status!='Encerrado' AND demo=?", (df,))
+    cams = count("SELECT COUNT(*) FROM cameras WHERE demo=?", (df,))
+    attention = count("SELECT COUNT(*) FROM cameras WHERE status IN ('Offline','Em manutenção') AND demo=?", (df,))
+    occ_open = count("SELECT COUNT(*) FROM occurrences WHERE status IN ('Aberta','Em andamento') AND archived_at IS NULL AND demo=?", (df,))
     today = date.today().isoformat()
-    agenda_today = count("SELECT COUNT(*) FROM agenda WHERE event_date=?", (today,))
+    agenda_today = count("SELECT COUNT(*) FROM agenda WHERE event_date=? AND demo=?", (today, df))
     body = f"""
     <div class="grid">
       <a class="card metric" href="{url_for('contracts')}"><h3>Contratos ativos</h3><b>{contracts_active}</b></a>
@@ -301,7 +332,13 @@ def dashboard():
       <a class="card metric" href="{url_for('agenda_page', filtro='hoje')}"><h3>Agenda hoje</h3><b>{agenda_today}</b></a>
     </div>
     <div class="panel"><h2>Pesquisa global</h2><form action="{url_for('search')}" class="search"><input name="q" placeholder="Toyota, CAM-007, Sorocaba..."><button>Pesquisar</button></form></div>
-    <div class="panel"><h2>Modo demonstração</h2><div class="actions"><a class="btn primary" href="{url_for('load_demo')}">Carregar dados de demonstração</a><a class="btn danger" href="{url_for('clear_demo')}">Limpar dados demonstração</a></div></div>
+    <div class="panel"><h2>Ambiente de dados</h2>
+      <p><b>Modo atual:</b> {mode_label()}</p>
+      <p class="tag">O sistema sempre abre em <b>Operação Oficial</b>. A demonstração usa dados e QR Codes separados (<b>7S-DEMO-CAM</b>) para não misturar com o banco oficial.</p>
+      <div class="actions">
+        {('<a class="btn primary" href="'+url_for('load_demo')+'">🧪 Entrar no modo demonstração</a>') if not is_demo_mode() else ('<a class="btn primary" href="'+url_for('operation_mode')+'">↩️ Voltar ao modo operação</a><a class="btn" href="'+url_for('load_demo')+'">🔄 Reiniciar demonstração</a>')}
+      </div>
+    </div>
     """
     return page(body)
 
@@ -309,7 +346,7 @@ def dashboard():
 @app.route("/clients")
 @login_required
 def clients():
-    rows = query("SELECT * FROM clients ORDER BY active DESC, name")
+    rows = query("SELECT * FROM clients WHERE demo=? ORDER BY active DESC, name", (current_demo_flag(),))
     can_edit = current_user()["role"] == "operacao"
     items = "".join([f"<div class='row'><b>{r['name']}</b><span>{r['city'] or ''}/{r['state'] or ''}</span><span>{r['responsible'] or ''}</span><span>{'Ativo' if r['active'] else 'Inativo'}</span><span class='actions'>{'<a class=\"btn small\" href=\"'+url_for('client_edit', id=r['id'])+'\">Editar</a>' if can_edit else ''}</span></div>" for r in rows])
     body = f"<div class='panel'><div class='actions'><h2 style='flex:1'>Clientes</h2>{'<a class=\"btn primary\" href=\"'+url_for('client_new')+'\">Novo cliente</a>' if can_edit else ''}</div>{items or '<p>Nenhum cliente.</p>'}</div>"
@@ -336,7 +373,7 @@ def client_form(r=None):
             execute("UPDATE clients SET name=?,fantasy=?,cnpj=?,responsible=?,phone=?,email=?,city=?,state=?,notes=?,active=? WHERE id=?", vals+(r["id"],))
             flash("Cliente atualizado.")
         else:
-            execute("INSERT INTO clients(name,fantasy,cnpj,responsible,phone,email,city,state,notes,active,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", vals+(datetime.now().isoformat(),))
+            execute("INSERT INTO clients(name,fantasy,cnpj,responsible,phone,email,city,state,notes,active,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", vals+(current_demo_flag(), datetime.now().isoformat(),))
             flash("Cliente criado.")
         return redirect(url_for("clients"))
     def val(k): return (r[k] if r else "") or ""
@@ -354,9 +391,13 @@ def client_form(r=None):
 @login_required
 def contracts():
     status = request.args.get("status", "Todos")
-    q = "" if status == "Todos" else "WHERE c.status=?"
-    params = () if status == "Todos" else (status,)
-    rows = query(f"SELECT c.*, cl.name client_name, (SELECT COUNT(*) FROM cameras ca WHERE ca.contract_id=c.id) cam_count FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id {q} ORDER BY c.created_at DESC", params)
+    if status == "Todos":
+        q = "WHERE c.demo=?"
+        params = (current_demo_flag(),)
+    else:
+        q = "WHERE c.demo=? AND c.status=?"
+        params = (current_demo_flag(), status)
+    rows = query(f"SELECT c.*, cl.name client_name, (SELECT COUNT(*) FROM cameras ca WHERE ca.contract_id=c.id AND ca.demo=c.demo) cam_count FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id {q} ORDER BY c.created_at DESC", params)
     can_edit = current_user()["role"] == "operacao"
     filters = "".join([f"<a class='{ 'active' if status==s else ''}' href='{url_for('contracts', status=s)}'>{s}</a>" for s in ["Todos"]+STATUS_CONTRATO])
     items = "".join([f"<div class='row'><b>{r['client_name'] or 'Sem cliente'}</b><span>{r['city'] or ''}/{r['state'] or ''}</span><span>{r['cam_count']} câmeras</span><span><span class='badge {status_class(r['status'])}'>{r['status']}</span></span><span class='actions'><a class='btn small' href='{url_for('contract_view', id=r['id'])}'>Ver</a>{('<a class=\"btn small\" href=\"'+url_for('contract_edit', id=r['id'])+'\">Editar</a>') if can_edit else ''}</span></div>" for r in rows])
@@ -375,7 +416,7 @@ def contract_edit(id): return contract_form(one("SELECT * FROM contracts WHERE i
 
 
 def contract_form(r=None):
-    clients_rows = query("SELECT * FROM clients WHERE active=1 ORDER BY name")
+    clients_rows = query("SELECT * FROM clients WHERE active=1 AND demo=? ORDER BY name", (current_demo_flag(),))
     if request.method == "POST":
         vals = (request.form.get("client_id"), request.form.get("obra"), request.form.get("city"), request.form.get("state"), request.form.get("start_date"), request.form.get("end_date"), int(request.form.get("expected_cameras") or 0), request.form.get("status"), request.form.get("notes"))
         if r:
@@ -383,7 +424,7 @@ def contract_form(r=None):
             flash("Contrato atualizado.")
             return redirect(url_for("contract_view", id=r["id"]))
         else:
-            execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (contract_code(),)+vals+(datetime.now().isoformat(),))
+            execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,notes,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (contract_code(),)+vals+(current_demo_flag(), datetime.now().isoformat(),))
             flash("Contrato criado.")
             return redirect(url_for("contracts"))
     def val(k): return (r[k] if r else "") or ""
@@ -425,12 +466,12 @@ def camera_row(c):
 @login_required
 def cameras():
     status = request.args.get("status", "Todas")
-    params = ()
-    where = ""
+    params = (current_demo_flag(),)
+    where = "WHERE ca.demo=?"
     if status == "atenção":
-        where = "WHERE ca.status IN ('Offline','Em manutenção')"
+        where += " AND ca.status IN ('Offline','Em manutenção')"
     elif status != "Todas":
-        where = "WHERE ca.status=?"; params = (status,)
+        where += " AND ca.status=?"; params = (current_demo_flag(), status)
     rows = query(f"""SELECT ca.*, co.obra, co.city contract_city, co.state contract_state, cl.name client_name
                     FROM cameras ca
                     LEFT JOIN contracts co ON co.id=ca.contract_id
@@ -484,8 +525,8 @@ def camera_edit(id): return camera_form(one("SELECT * FROM cameras WHERE id=?", 
 
 
 def camera_form(r=None, contract_id=None):
-    clients_rows = query("SELECT * FROM clients WHERE active=1 ORDER BY name")
-    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id ORDER BY cl.name, c.obra")
+    clients_rows = query("SELECT * FROM clients WHERE active=1 AND demo=? ORDER BY name", (current_demo_flag(),))
+    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.demo=? ORDER BY cl.name, c.obra", (current_demo_flag(),))
     selected_contract_id = (r["contract_id"] if r else contract_id)
     selected_client_id = ""
     if selected_contract_id:
@@ -498,7 +539,7 @@ def camera_form(r=None, contract_id=None):
             flash("Câmera atualizada.")
             return redirect(url_for("camera_view", id=r["id"]))
         code = request.form.get("code") or next_camera_code()
-        execute("INSERT INTO cameras(code,model,serial,contract_id,current_location,service,status,notes,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (code,)+vals+(datetime.now().isoformat(),))
+        execute("INSERT INTO cameras(code,model,serial,contract_id,current_location,service,status,notes,demo,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (code,)+vals[:7]+(current_demo_flag(),)+vals[7:]+(datetime.now().isoformat(),))
         flash("Câmera criada.")
         return redirect(url_for("cameras"))
     def val(k): return (r[k] if r else "") or ""
@@ -538,7 +579,8 @@ def camera_form(r=None, contract_id=None):
 def camera_view(id):
     c = one("SELECT ca.*, co.obra, cl.name client_name FROM cameras ca LEFT JOIN contracts co ON co.id=ca.contract_id LEFT JOIN clients cl ON cl.id=co.client_id WHERE ca.id=?", (id,))
     hist = query("SELECT * FROM camera_history WHERE camera_id=? ORDER BY created_at DESC", (id,))
-    occs = query("SELECT * FROM occurrences WHERE camera_id=? ORDER BY created_at DESC", (id,))
+    occs = query("SELECT * FROM occurrences WHERE camera_id=? AND archived_at IS NULL ORDER BY created_at DESC", (id,))
+    occs_hist = query("SELECT * FROM occurrences WHERE camera_id=? AND archived_at IS NOT NULL ORDER BY archived_at DESC", (id,))
     hist_parts = []
     for h in hist:
         foto = rv(h, 'install_photo', '')
@@ -546,8 +588,11 @@ def camera_view(id):
         hist_parts.append(f"<div class='row'><b>{h['created_at'][:16]}</b><span>{h['old_status'] or '-'} → {h['new_status'] or '-'}</span><span>{h['old_location'] or '-'} → {h['new_location'] or '-'}</span><span>{h['user_name'] or ''}</span><span>{h['note'] or ''}{foto_html}</span></div>")
     hist_html = "".join(hist_parts)
     occ_html = "".join([f"<div class='row'><b>{o['title']}</b><span>{o['problem']}</span><span>{o['status']}</span><span>{o['created_at'][:16]}</span><span></span></div>" for o in occs])
+    occ_hist_html = "".join([f"<div class='row'><b>{o['title']}</b><span>{o['problem']}</span><span>Arquivada</span><span>{(o['archived_at'] or o['created_at'])[:16]}</span><span>{o['archived_location'] or '-'}</span></div>" for o in occs_hist])
     body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p>{f"<p><b>Última foto da instalação:</b><br><img src='{rv(c, 'last_install_photo', '')}' alt='Foto da instalação' style='max-width:320px;border-radius:14px;border:1px solid #dbe3ef;margin-top:8px'></p>" if rv(c, 'last_install_photo', '') else ''}<div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a>{'<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a>' if current_user()['role']=='operacao' else ''}</div></div>
-    <div class="panel"><h2>Histórico</h2>{hist_html or '<p>Sem histórico.</p>'}</div><div class="panel"><h2>Ocorrências</h2>{occ_html or '<p>Sem ocorrências.</p>'}</div>"""
+    <div class="panel"><h2>Histórico</h2>{hist_html or '<p>Sem histórico.</p>'}</div>
+    <div class="panel"><h2>Ocorrências do ciclo atual</h2>{occ_html or '<p>Sem ocorrências ativas neste ciclo.</p>'}</div>
+    <div class="panel"><h2>Ocorrências arquivadas de ciclos anteriores</h2>{occ_hist_html or '<p>Sem ocorrências arquivadas.</p>'}</div>"""
     return page(body, breadcrumb=f"Dashboard > Câmeras > {c['code']}")
 
 
@@ -614,8 +659,8 @@ def camera_approve(id):
 @operacao_required
 def camera_transfer(id):
     c = one("SELECT * FROM cameras WHERE id=?", (id,))
-    clients_rows = query("SELECT * FROM clients WHERE active=1 ORDER BY name")
-    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id ORDER BY cl.name, c.obra")
+    clients_rows = query("SELECT * FROM clients WHERE active=1 AND demo=? ORDER BY name", (current_demo_flag(),))
+    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.demo=? ORDER BY cl.name, c.obra", (current_demo_flag(),))
     selected_client_id = ""
     if c and c["contract_id"]:
         cr = one("SELECT client_id FROM contracts WHERE id=?", (c["contract_id"],))
@@ -661,8 +706,13 @@ def camera_transfer(id):
 @login_required
 def occurrences():
     status = request.args.get("status")
-    where = "WHERE o.status IN ('Aberta','Em andamento')" if status == "abertas" else ""
-    rows = query(f"SELECT o.*, ca.code camera_code FROM occurrences o LEFT JOIN cameras ca ON ca.id=o.camera_id {where} ORDER BY o.created_at DESC")
+    if status == "abertas":
+        where = "WHERE o.status IN ('Aberta','Em andamento') AND o.archived_at IS NULL AND o.demo=?"
+    elif status == "arquivadas":
+        where = "WHERE o.archived_at IS NOT NULL AND o.demo=?"
+    else:
+        where = "WHERE o.archived_at IS NULL AND o.demo=?"
+    rows = query(f"SELECT o.*, ca.code camera_code FROM occurrences o LEFT JOIN cameras ca ON ca.id=o.camera_id {where} ORDER BY o.created_at DESC", (current_demo_flag(),))
     can_edit = current_user()["role"] == "operacao"
     items = "".join([f"<div class='row'><b>{r['camera_code'] or '-'}</b><span>{r['title']}</span><span>{r['status']}</span><span>{r['created_at'][:16]}</span><span>{'<a class=\"btn small\" href=\"'+url_for('occurrence_close', id=r['id'])+'\">Resolver</a>' if can_edit and r['status']!='Resolvida' else ''}</span></div>" for r in rows])
     body = f"<div class='panel'><div class='actions'><h2 style='flex:1'>Ocorrências</h2>{'<a class=\"btn primary\" href=\"'+url_for('occurrence_new')+'\">Nova ocorrência</a>' if can_edit else ''}</div>{items or '<p>Nenhuma ocorrência.</p>'}</div>"
@@ -672,10 +722,10 @@ def occurrences():
 @app.route("/occurrences/new", methods=["GET", "POST"])
 @operacao_required
 def occurrence_new():
-    cameras_rows = query("SELECT * FROM cameras ORDER BY code")
+    cameras_rows = query("SELECT * FROM cameras WHERE demo=? ORDER BY code", (current_demo_flag(),))
     cam_id = request.args.get("camera_id")
     if request.method == "POST":
-        execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,notes,created_at) VALUES(?,?,?,?,?,?,?)", (request.form.get("camera_id"), request.form.get("title"), request.form.get("problem"), "Aberta", request.form.get("responsible"), request.form.get("notes"), datetime.now().isoformat()))
+        execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,notes,demo,created_at) VALUES(?,?,?,?,?,?,?,?)", (request.form.get("camera_id"), request.form.get("title"), request.form.get("problem"), "Aberta", request.form.get("responsible"), request.form.get("notes"), current_demo_flag(), datetime.now().isoformat()))
         flash("Ocorrência criada.")
         return redirect(url_for("occurrences"))
     opts = "".join([f"<option value='{c['id']}' {'selected' if cam_id and str(c['id'])==str(cam_id) else ''}>{c['code']}</option>" for c in cameras_rows])
@@ -696,9 +746,9 @@ def occurrence_close(id):
 def agenda_page():
     filtro = request.args.get("filtro")
     if filtro == "hoje":
-        rows = query("SELECT * FROM agenda WHERE event_date=? ORDER BY event_time", (date.today().isoformat(),))
+        rows = query("SELECT * FROM agenda WHERE event_date=? AND demo=? ORDER BY event_time", (date.today().isoformat(), current_demo_flag()))
     else:
-        rows = query("SELECT * FROM agenda ORDER BY event_date,event_time LIMIT 100")
+        rows = query("SELECT * FROM agenda WHERE demo=? ORDER BY event_date,event_time LIMIT 100", (current_demo_flag(),))
     can_edit = current_user()["role"] == "operacao"
     items = "".join([f"<div class='row'><b>{r['event_date']} {r['event_time']}</b><span>{r['title']}</span><span>{r['notes'] or ''}</span><span></span><span></span></div>" for r in rows])
     body = f"<div class='panel'><div class='actions'><h2 style='flex:1'>Agenda</h2>{'<a class=\"btn primary\" href=\"'+url_for('agenda_new')+'\">Novo evento</a>' if can_edit else ''}</div>{items or '<p>Nenhum evento.</p>'}</div>"
@@ -709,7 +759,7 @@ def agenda_page():
 @operacao_required
 def agenda_new():
     if request.method == "POST":
-        execute("INSERT INTO agenda(title,event_date,event_time,notes,created_at) VALUES(?,?,?,?,?)", (request.form.get("title"), request.form.get("event_date"), request.form.get("event_time"), request.form.get("notes"), datetime.now().isoformat()))
+        execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", (request.form.get("title"), request.form.get("event_date"), request.form.get("event_time"), request.form.get("notes"), current_demo_flag(), datetime.now().isoformat()))
         flash("Evento criado.")
         return redirect(url_for("agenda_page"))
     body = """<div class="panel"><h2>Novo evento</h2><form method="post" class="formgrid"><label>Título<input name="title"></label><label>Data<input type="date" name="event_date"></label><label>Hora<input type="time" name="event_time"></label><label class="full">Observações<textarea name="notes"></textarea></label><div class="full"><button class="primary">Salvar</button></div></form></div>"""
@@ -721,10 +771,10 @@ def agenda_new():
 def search():
     q = request.args.get("q", "").strip()
     like = f"%{q}%"
-    clients_rs = query("SELECT 'Cliente' tipo, name titulo, city detalhe, '/clients' link FROM clients WHERE name LIKE ? OR city LIKE ?", (like, like)) if q else []
-    contracts_rs = query("SELECT 'Contrato' tipo, coalesce(cl.name,'') || ' - ' || coalesce(c.obra,'') titulo, c.city detalhe, '/contracts/' || c.id link FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id WHERE cl.name LIKE ? OR c.obra LIKE ? OR c.city LIKE ? OR c.code LIKE ?", (like, like, like, like)) if q else []
-    cameras_rs = query("SELECT 'Câmera' tipo, code titulo, current_location detalhe, '/cameras/' || id link FROM cameras WHERE code LIKE ? OR current_location LIKE ? OR service LIKE ?", (like, like, like)) if q else []
-    occ_rs = query("SELECT 'Ocorrência' tipo, title titulo, problem detalhe, '/occurrences' link FROM occurrences WHERE title LIKE ? OR problem LIKE ?", (like, like)) if q else []
+    clients_rs = query("SELECT 'Cliente' tipo, name titulo, city detalhe, '/clients' link FROM clients WHERE demo=? AND (name LIKE ? OR city LIKE ?)", (current_demo_flag(), like, like)) if q else []
+    contracts_rs = query("SELECT 'Contrato' tipo, coalesce(cl.name,'') || ' - ' || coalesce(c.obra,'') titulo, c.city detalhe, '/contracts/' || c.id link FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.demo=? AND (cl.name LIKE ? OR c.obra LIKE ? OR c.city LIKE ? OR c.code LIKE ?)", (current_demo_flag(), like, like, like, like)) if q else []
+    cameras_rs = query("SELECT 'Câmera' tipo, code titulo, current_location detalhe, '/cameras/' || id link FROM cameras WHERE demo=? AND (code LIKE ? OR current_location LIKE ? OR service LIKE ?)", (current_demo_flag(), like, like, like)) if q else []
+    occ_rs = query("SELECT 'Ocorrência' tipo, title titulo, problem detalhe, '/occurrences' link FROM occurrences WHERE archived_at IS NULL AND demo=? AND (title LIKE ? OR problem LIKE ?)", (current_demo_flag(), like, like)) if q else []
     rows = list(clients_rs)+list(contracts_rs)+list(cameras_rs)+list(occ_rs)
     items = "".join([f"<div class='row'><b>{r['tipo']}</b><span>{r['titulo']}</span><span>{r['detalhe'] or ''}</span><span></span><span><a class='btn small' href='{r['link']}'>Abrir</a></span></div>" for r in rows])
     body = f"<div class='panel'><h2>Pesquisa: {q}</h2><form class='search'><input name='q' value='{q}'><button>Pesquisar</button></form>{items or '<p>Nenhum resultado.</p>'}</div>"
@@ -813,10 +863,15 @@ def campo():
                             install_photo_data = "data:%s;base64,%s" % (mime, base64.b64encode(raw).decode("ascii"))
                 if action == "Retirada":
                     # Retirada encerra o ciclo operacional: limpa contrato/local/serviço e exige novo teste antes de reutilizar.
-                    reset_note = (note + " | " if note else "") + "Retirada confirmada. Dados operacionais limpos; câmera aguardando teste."
+                    # As ocorrências do ciclo atual são arquivadas no contrato/obra onde a câmera estava instalada,
+                    # para não aparecerem no próximo uso da câmera, mas permanecerem consultáveis no histórico.
+                    archived_at = datetime.now().isoformat()
+                    active_occ_count = count("SELECT COUNT(*) FROM occurrences WHERE camera_id=? AND archived_at IS NULL", (camera["id"],))
+                    execute("UPDATE occurrences SET archived_at=?, archived_contract_id=?, archived_location=? WHERE camera_id=? AND archived_at IS NULL", (archived_at, camera["contract_id"], old_loc, camera["id"]))
+                    reset_note = (note + " | " if note else "") + f"Retirada confirmada. Dados operacionais limpos; {active_occ_count} ocorrência(s) arquivada(s) no histórico da obra; câmera aguardando teste."
                     execute("UPDATE cameras SET status=?, contract_id=NULL, current_location='', service='', updated_at=? WHERE id=?", ("Aguardando teste", datetime.now().isoformat(), camera["id"]))
-                    execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], old_loc, "", old_status, "Retirada / Aguardando teste", reset_note, "Campo", datetime.now().isoformat()))
-                    msg = "Câmera retirada. Dados operacionais limpos e câmera enviada para Aguardando teste."
+                    execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (camera["id"], camera["contract_id"], None, old_loc, "", old_status, "Retirada / Aguardando teste", reset_note, "Campo", archived_at))
+                    msg = "Câmera retirada. Dados operacionais e ocorrências do ciclo atual foram arquivados. A câmera voltou para Aguardando teste."
                 else:
                     if install_photo_data:
                         execute("UPDATE cameras SET status=?, current_location=?, last_install_photo=?, updated_at=? WHERE id=?", (action, new_loc, install_photo_data, datetime.now().isoformat(), camera["id"]))
@@ -891,7 +946,8 @@ def next_free_demo_camera_code(start=900):
 @app.route("/demo/load")
 @operacao_required
 def load_demo():
-    # Limpa apenas dados demo. Dados reais do Supabase não são apagados.
+    # Entra em ambiente separado de demonstração. Dados reais do Supabase não são apagados.
+    session["data_mode"] = "demo"
     clear_demo_data()
     now = datetime.now().isoformat()
     demo_contracts = [
@@ -927,9 +983,17 @@ def load_demo():
                 cam_num += 1
         execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Instalação Microsoft", date.today().isoformat(), "09:00", "Demonstração", 1, now))
         execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Visita Equinix", date.today().isoformat(), "14:00", "Demonstração", 1, now))
-        flash("Dados de demonstração carregados sem alterar dados reais.")
+        flash("Modo demonstração ativado. Dados demo carregados sem alterar dados oficiais.")
     except Exception as e:
         flash(f"Erro ao carregar demonstração: {e}")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/demo/operation")
+@operacao_required
+def operation_mode():
+    session["data_mode"] = "official"
+    flash("Modo operação oficial ativado. Dados reais preservados.")
     return redirect(url_for("dashboard"))
 
 
@@ -946,7 +1010,8 @@ def clear_demo_data():
 @operacao_required
 def clear_demo():
     clear_demo_data()
-    flash("Dados de demonstração removidos.")
+    session["data_mode"] = "official"
+    flash("Dados de demonstração removidos. Modo operação oficial ativado.")
     return redirect(url_for("dashboard"))
 
 
