@@ -1,34 +1,19 @@
-# 7Sense CM Cloud v1.5 Campo
+# 7Sense – Data into Action | Contract Manager v1.7
 
-Versão com fluxo operacional sequencial no módulo `/campo`.
+## Ajuste desta versão
 
-## Novidades
+- Relação correta Cliente → Obra/Contrato → Câmera.
+- No cadastro/edição de câmera, agora existe um campo **Cliente**.
+- Ao escolher o cliente, o campo **Obra/Contrato** mostra somente obras daquele cliente.
+- Na lista de câmeras, agora aparece **Cliente / Obra** junto com a câmera.
+- A tela de transferência de câmera também filtra contratos por cliente.
 
-- Etapas do campo em ordem obrigatória:
-  1. Em transporte
-  2. Chegou na obra
-  3. Instalando
-  4. Ativar câmera
-  5. Retirada
-- Etapas concluídas ficam verdes e desabilitadas.
-- Somente a próxima etapa fica liberada.
-- Registrar problema fica sempre disponível.
-- Histórico recente da câmera exibido no celular.
+## Atualização no Render
 
-## Deploy no Render
+1. Copie estes arquivos para a pasta local do GitHub `7sense-cm-cloud`.
+2. Substitua os arquivos antigos.
+3. No GitHub Desktop, faça commit:
+   `v1.7 cliente obra camera`
+4. Clique em **Push origin**.
+5. Aguarde o Render atualizar automaticamente.
 
-Depois de substituir os arquivos no repositório:
-
-1. Commit: `Fluxo sequencial do campo v1.5`
-2. Push origin
-3. O Render atualiza automaticamente.
-
-## Links
-
-- Admin: `/login`
-- Campo: `/campo`
-
-
-## v1.5.1
-- Corrige fluxo de campo para reiniciar quando câmera estiver com status Em estoque.
-- Evita que histórico antigo deixe botões verdes em novos testes ou novas implantações.

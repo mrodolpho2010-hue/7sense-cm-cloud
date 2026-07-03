@@ -8,7 +8,7 @@ from io import BytesIO
 import qrcode
 from PIL import Image, ImageDraw, ImageFont
 
-APP_VERSION = "1.6 Patrimônio e QR"
+APP_VERSION = "1.7 Cliente > Obra > Câmera"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -139,12 +139,21 @@ def status_class(s):
     return "ok"
 
 
+def rv(row, key, default=""):
+    """Lê um campo de sqlite.Row sem quebrar quando a consulta não trouxe a coluna."""
+    try:
+        v = row[key]
+        return v if v is not None else default
+    except Exception:
+        return default
+
+
 BASE = r"""
 <!doctype html><html lang="pt-br"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>7Sense CM</title>
 <style>
 :root{--bg:#f5f7fb;--card:#fff;--text:#0f172a;--muted:#64748b;--border:#dbe3ef;--accent:#0f5fff;--ok:#0f9f6e;--danger:#dc2626;--warn:#d97706;--info:#2563eb;--softdanger:#fee2e2;--softwarn:#fef3c7;--softok:#dcfce7}
-*{box-sizing:border-box} body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)} a{text-decoration:none;color:inherit} .wrap{max-width:1200px;margin:0 auto;padding:18px}.top{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:14px}.brand{font-weight:800;font-size:20px}.tag{color:var(--muted);font-size:13px}.nav{display:flex;gap:8px;flex-wrap:wrap}.btn,.nav a,button{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-size:15px;cursor:pointer;color:var(--text)}.btn.primary,button.primary{background:var(--accent);color:white;border-color:var(--accent)}.btn.danger{background:var(--danger);color:white}.btn.small{padding:6px 10px;font-size:13px}.grid{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:18px}.metric{display:block}.metric h3{margin:0 0 8px;font-size:18px}.metric b{font-size:36px}.metric.danger{border-color:#fecaca;background:#fff7f7}.metric:hover{box-shadow:0 6px 20px rgba(15,23,42,.08)}.search{display:flex;gap:8px;flex:1;max-width:420px}.search input,input,select,textarea{width:100%;border:1px solid var(--border);border-radius:12px;padding:11px;font-size:15px;background:#fff}textarea{min-height:90px}.panel{background:#fff;border:1px solid var(--border);border-radius:18px;padding:16px;margin-top:12px}.row{display:grid;grid-template-columns:1.2fr 1.2fr 1fr .8fr auto;gap:8px;align-items:center;border-bottom:1px solid #eef2f7;padding:11px 4px}.row:last-child{border-bottom:none}.row.camera{grid-template-columns:1fr 1fr 1fr 1fr 1.4fr}.row.danger{background:#fff1f2;color:#991b1b;border-radius:12px;padding-left:10px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:13px;border:1px solid var(--border);background:#f8fafc}.badge.ok{background:var(--softok);color:#166534}.badge.danger{background:var(--softdanger);color:#991b1b}.badge.warn{background:var(--softwarn);color:#92400e}.badge.info{background:#dbeafe;color:#1e40af}.badge.muted{background:#e5e7eb;color:#374151}.filters{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.filters a{border:1px solid var(--border);background:#fff;padding:8px 12px;border-radius:999px}.filters a.active{background:var(--accent);color:#fff}.flash{background:#fef3c7;border:1px solid #fde68a;border-radius:12px;padding:10px;margin:10px 0}.breadcrumb{font-size:14px;color:var(--muted);margin:8px 0 14px}.actions{display:flex;gap:8px;flex-wrap:wrap}.formgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.full{grid-column:1/-1}.mobile-card{max-width:560px;margin:0 auto}.hero{font-size:22px;font-weight:800}.hidden{display:none!important}@media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}.row,.row.camera{display:block}.row>*{margin:5px 0}.formgrid{grid-template-columns:1fr}.top{display:block}.nav{margin-top:10px}.search{max-width:none;margin-top:10px}}
+*{box-sizing:border-box} body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)} a{text-decoration:none;color:inherit} .wrap{max-width:1200px;margin:0 auto;padding:18px}.top{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:14px}.brand{font-weight:800;font-size:20px}.tag{color:var(--muted);font-size:13px}.nav{display:flex;gap:8px;flex-wrap:wrap}.btn,.nav a,button{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-size:15px;cursor:pointer;color:var(--text)}.btn.primary,button.primary{background:var(--accent);color:white;border-color:var(--accent)}.btn.danger{background:var(--danger);color:white}.btn.small{padding:6px 10px;font-size:13px}.grid{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:18px}.metric{display:block}.metric h3{margin:0 0 8px;font-size:18px}.metric b{font-size:36px}.metric.danger{border-color:#fecaca;background:#fff7f7}.metric:hover{box-shadow:0 6px 20px rgba(15,23,42,.08)}.search{display:flex;gap:8px;flex:1;max-width:420px}.search input,input,select,textarea{width:100%;border:1px solid var(--border);border-radius:12px;padding:11px;font-size:15px;background:#fff}textarea{min-height:90px}.panel{background:#fff;border:1px solid var(--border);border-radius:18px;padding:16px;margin-top:12px}.row{display:grid;grid-template-columns:1.2fr 1.2fr 1fr .8fr auto;gap:8px;align-items:center;border-bottom:1px solid #eef2f7;padding:11px 4px}.row:last-child{border-bottom:none}.row.camera{grid-template-columns:.9fr 1fr 1fr 1fr 1fr 1.4fr}.row.danger{background:#fff1f2;color:#991b1b;border-radius:12px;padding-left:10px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:13px;border:1px solid var(--border);background:#f8fafc}.badge.ok{background:var(--softok);color:#166534}.badge.danger{background:var(--softdanger);color:#991b1b}.badge.warn{background:var(--softwarn);color:#92400e}.badge.info{background:#dbeafe;color:#1e40af}.badge.muted{background:#e5e7eb;color:#374151}.filters{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.filters a{border:1px solid var(--border);background:#fff;padding:8px 12px;border-radius:999px}.filters a.active{background:var(--accent);color:#fff}.flash{background:#fef3c7;border:1px solid #fde68a;border-radius:12px;padding:10px;margin:10px 0}.breadcrumb{font-size:14px;color:var(--muted);margin:8px 0 14px}.actions{display:flex;gap:8px;flex-wrap:wrap}.formgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.full{grid-column:1/-1}.mobile-card{max-width:560px;margin:0 auto}.hero{font-size:22px;font-weight:800}.hidden{display:none!important}@media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}.row,.row.camera{display:block}.row>*{margin:5px 0}.formgrid{grid-template-columns:1fr}.top{display:block}.nav{margin-top:10px}.search{max-width:none;margin-top:10px}}
 </style>
 </head><body><div class="wrap">
 <div class="top"><div><div class="brand">7Sense – Data into Action</div><div class="tag">Contract Manager {{version}}</div></div>
@@ -306,7 +315,7 @@ def contract_form(r=None):
 @login_required
 def contract_view(id):
     r = one("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.id=?", (id,))
-    cams = query("SELECT * FROM cameras WHERE contract_id=? ORDER BY code", (id,))
+    cams = query("SELECT ca.*, co.obra, cl.name client_name FROM cameras ca LEFT JOIN contracts co ON co.id=ca.contract_id LEFT JOIN clients cl ON cl.id=co.client_id WHERE ca.contract_id=? ORDER BY ca.code", (id,))
     items = "".join([camera_row(c) for c in cams])
     body = f"""<div class="panel"><h2>{r['client_name']} – {r['obra']}</h2><p><span class="badge {status_class(r['status'])}">{r['status']}</span> · {r['city']}/{r['state']} · Previstas: {r['expected_cameras']}</p>
     <div class="actions"><a class="btn" href="{url_for('contracts')}">Voltar</a>{'<a class=\"btn primary\" href=\"'+url_for('camera_new', contract_id=r['id'])+'\">Adicionar câmera</a>' if current_user()['role']=='operacao' else ''}</div></div>
@@ -320,7 +329,9 @@ def camera_row(c):
     qr_btn = f"<a class='btn small' href='{url_for('camera_qr', id=c['id'])}'>📷 QR</a>"
     test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=c['id'])}'>🧪 Teste</a>" if current_user() and current_user()['role']=='operacao' else ""
     edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=c['id'])}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=c['id'])}'>Transferir</a>") if current_user() and current_user()['role']=='operacao' else ""
-    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{c['code']}{aprovado}</b><span>{c['current_location'] or '-'}</span><span>{c['service'] or '-'}</span><span><span class='badge {cls}'>{c['status']}</span></span><span class='actions'>{qr_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=c['id'])}'>Ver</a>{edit_btns}</span></div>"
+    cliente = rv(c, 'client_name', '-') or '-'
+    obra = rv(c, 'obra', '-') or '-'
+    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{c['code']}{aprovado}</b><span><b>{cliente}</b><br><small>{obra}</small></span><span>{c['current_location'] or '-'}</span><span>{c['service'] or '-'}</span><span><span class='badge {cls}'>{c['status']}</span></span><span class='actions'>{qr_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=c['id'])}'>Ver</a>{edit_btns}</span></div>"
 
 
 @app.route("/cameras")
@@ -337,7 +348,8 @@ def cameras():
     filters = ["Todas", "Em operação", "Offline", "Em manutenção", "Em estoque", "Em transporte", "Retirada"]
     fhtml = "".join([f"<a class='{ 'active' if status==s else ''}' href='{url_for('cameras', status=s)}'>{s}</a>" for s in filters])
     items = "".join([camera_row(c) for c in rows])
-    body = f"<div class='panel'><div class='actions'><h2 style='flex:1'>Câmeras</h2>{'<a class=\"btn primary\" href=\"'+url_for('camera_new')+'\">Nova câmera</a>' if current_user()['role']=='operacao' else ''}</div><div class='filters'>{fhtml}</div>{items or '<p>Nenhuma câmera.</p>'}</div>"
+    header = "<div class='row camera' style='font-weight:bold;color:#64748b'><span>Código</span><span>Cliente / Obra</span><span>Local</span><span>Serviço</span><span>Status</span><span>Ações</span></div>" if rows else ""
+    body = f"<div class='panel'><div class='actions'><h2 style='flex:1'>Câmeras</h2>{'<a class=\"btn primary\" href=\"'+url_for('camera_new')+'\">Nova câmera</a>' if current_user()['role']=='operacao' else ''}</div><div class='filters'>{fhtml}</div>{header}{items or '<p>Nenhuma câmera.</p>'}</div>"
     return page(body, breadcrumb="Dashboard > Câmeras")
 
 
@@ -352,7 +364,13 @@ def camera_edit(id): return camera_form(one("SELECT * FROM cameras WHERE id=?", 
 
 
 def camera_form(r=None, contract_id=None):
-    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id ORDER BY c.created_at DESC")
+    clients_rows = query("SELECT * FROM clients WHERE active=1 ORDER BY name")
+    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id ORDER BY cl.name, c.obra")
+    selected_contract_id = (r["contract_id"] if r else contract_id)
+    selected_client_id = ""
+    if selected_contract_id:
+        cr = one("SELECT client_id FROM contracts WHERE id=?", (selected_contract_id,))
+        selected_client_id = str(cr["client_id"]) if cr and cr["client_id"] else ""
     if request.method == "POST":
         vals = (request.form.get("model"), request.form.get("serial"), request.form.get("contract_id") or None, request.form.get("current_location"), request.form.get("service"), request.form.get("status"), request.form.get("notes"), datetime.now().isoformat())
         if r:
@@ -364,15 +382,34 @@ def camera_form(r=None, contract_id=None):
         flash("Câmera criada.")
         return redirect(url_for("cameras"))
     def val(k): return (r[k] if r else "") or ""
-    contract_opts = "<option value=''>Sem contrato / estoque</option>" + "".join([f"<option value='{c['id']}' {'selected' if (r and r['contract_id']==c['id']) or (contract_id and str(c['id'])==str(contract_id)) else ''}>{c['client_name']} - {c['obra']}</option>" for c in contracts_rows])
+    client_opts = "<option value=''>Sem cliente / estoque</option>" + "".join([f"<option value='{cl['id']}' {'selected' if selected_client_id==str(cl['id']) else ''}>{cl['name']}</option>" for cl in clients_rows])
+    contract_opts = "<option value='' data-client=''>Sem contrato / estoque</option>" + "".join([f"<option value='{c['id']}' data-client='{c['client_id'] or ''}' {'selected' if selected_contract_id and str(c['id'])==str(selected_contract_id) else ''}>{c['client_name'] or 'Sem cliente'} - {c['obra']}</option>" for c in contracts_rows])
     service_opts = "".join([f"<option {'selected' if val('service')==s else ''}>{s}</option>" for s in SERVICOS])
     status_opts = "".join([f"<option {'selected' if val('status')==s else ''}>{s}</option>" for s in STATUS_CAMERA])
     code_field = f"<label>Código<input name='code' value='{next_camera_code()}'></label>" if not r else f"<label>Código<input value='{val('code')}' disabled></label>"
-    body = f"""<div class="panel"><h2>{'Editar' if r else 'Nova'} Câmera</h2><form method="post" class="formgrid">{code_field}
+    body = f"""<div class="panel"><h2>{'Editar' if r else 'Nova'} Câmera</h2>
+    <p class="tag">Escolha primeiro o <b>Cliente</b> e depois a <b>Obra/Contrato</b>. Isso evita confusão quando o mesmo cliente tiver várias obras.</p>
+    <form method="post" class="formgrid">{code_field}
     <label>Modelo<input name="model" value="{val('model')}"></label><label>Nº Série<input name="serial" value="{val('serial')}"></label>
-    <label>Contrato atual<select name="contract_id">{contract_opts}</select></label><label>Local atual<input name="current_location" value="{val('current_location')}"></label>
-    <label>Serviço<select name="service">{service_opts}</select></label><label>Status<select name="status">{status_opts}</select></label>
-    <label class="full">Observações<textarea name="notes">{val('notes')}</textarea></label><div class="full"><button class="primary">Salvar</button></div></form></div>"""
+    <label>Cliente<select id="client_select" name="client_select">{client_opts}</select></label><label>Obra / contrato atual<select id="contract_select" name="contract_id">{contract_opts}</select></label>
+    <label>Local atual<input name="current_location" value="{val('current_location')}"></label><label>Serviço<select name="service">{service_opts}</select></label>
+    <label>Status<select name="status">{status_opts}</select></label><label class="full">Observações<textarea name="notes">{val('notes')}</textarea></label>
+    <div class="full"><button class="primary">Salvar</button></div></form></div>
+    <script>
+    function filtrarContratos(){{
+      const cliente = document.getElementById('client_select').value;
+      const contrato = document.getElementById('contract_select');
+      let selectedStillVisible = false;
+      Array.from(contrato.options).forEach(opt => {{
+        const show = !opt.value || !cliente || opt.dataset.client === cliente;
+        opt.hidden = !show;
+        if (opt.selected && show) selectedStillVisible = true;
+      }});
+      if (!selectedStillVisible) contrato.value = '';
+    }}
+    document.getElementById('client_select').addEventListener('change', filtrarContratos);
+    filtrarContratos();
+    </script>"""
     return page(body, breadcrumb="Dashboard > Câmeras > Formulário")
 
 
@@ -452,7 +489,12 @@ def camera_approve(id):
 @operacao_required
 def camera_transfer(id):
     c = one("SELECT * FROM cameras WHERE id=?", (id,))
-    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id ORDER BY c.created_at DESC")
+    clients_rows = query("SELECT * FROM clients WHERE active=1 ORDER BY name")
+    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id ORDER BY cl.name, c.obra")
+    selected_client_id = ""
+    if c and c["contract_id"]:
+        cr = one("SELECT client_id FROM contracts WHERE id=?", (c["contract_id"],))
+        selected_client_id = str(cr["client_id"]) if cr and cr["client_id"] else ""
     if request.method == "POST":
         old = c
         new_contract = request.form.get("contract_id") or None
@@ -464,13 +506,29 @@ def camera_transfer(id):
         execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_service,new_service,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (id, old['contract_id'], new_contract, old['current_location'], new_loc, old['service'], new_service, old['status'], new_status, note, current_user()['name'], datetime.now().isoformat()))
         flash("Câmera transferida/atualizada.")
         return redirect(url_for("camera_view", id=id))
-    opts = "<option value=''>Sem contrato / estoque</option>" + "".join([f"<option value='{r['id']}' {'selected' if c['contract_id']==r['id'] else ''}>{r['client_name']} - {r['obra']}</option>" for r in contracts_rows])
+    client_opts = "<option value=''>Sem cliente / estoque</option>" + "".join([f"<option value='{cl['id']}' {'selected' if selected_client_id==str(cl['id']) else ''}>{cl['name']}</option>" for cl in clients_rows])
+    opts = "<option value='' data-client=''>Sem contrato / estoque</option>" + "".join([f"<option value='{r['id']}' data-client='{r['client_id'] or ''}' {'selected' if c['contract_id']==r['id'] else ''}>{r['client_name'] or 'Sem cliente'} - {r['obra']}</option>" for r in contracts_rows])
     services = "".join([f"<option {'selected' if c['service']==s else ''}>{s}</option>" for s in SERVICOS])
     statuses = "".join([f"<option {'selected' if c['status']==s else ''}>{s}</option>" for s in STATUS_CAMERA])
-    body = f"""<div class="panel"><h2>Transferir / Atualizar {c['code']}</h2><form method="post" class="formgrid">
-    <label>Novo contrato<select name="contract_id">{opts}</select></label><label>Novo local<input name="current_location" value="{c['current_location'] or ''}"></label>
-    <label>Novo serviço<select name="service">{services}</select></label><label>Novo status<select name="status">{statuses}</select></label>
-    <label class="full">Observação da movimentação<textarea name="note"></textarea></label><div class="full"><button class="primary">Salvar transferência</button></div></form></div>"""
+    body = f"""<div class="panel"><h2>Transferir / Atualizar {c['code']}</h2><p class="tag">Selecione o cliente para filtrar somente as obras/contratos desse cliente.</p><form method="post" class="formgrid">
+    <label>Cliente<select id="client_select" name="client_select">{client_opts}</select></label><label>Novo contrato / obra<select id="contract_select" name="contract_id">{opts}</select></label>
+    <label>Novo local<input name="current_location" value="{c['current_location'] or ''}"></label><label>Novo serviço<select name="service">{services}</select></label>
+    <label>Novo status<select name="status">{statuses}</select></label><label class="full">Observação da movimentação<textarea name="note"></textarea></label><div class="full"><button class="primary">Salvar transferência</button></div></form></div>
+    <script>
+    function filtrarContratos(){{
+      const cliente = document.getElementById('client_select').value;
+      const contrato = document.getElementById('contract_select');
+      let selectedStillVisible = false;
+      Array.from(contrato.options).forEach(opt => {{
+        const show = !opt.value || !cliente || opt.dataset.client === cliente;
+        opt.hidden = !show;
+        if (opt.selected && show) selectedStillVisible = true;
+      }});
+      if (!selectedStillVisible) contrato.value = '';
+    }}
+    document.getElementById('client_select').addEventListener('change', filtrarContratos);
+    filtrarContratos();
+    </script>"""
     return page(body, breadcrumb=f"Dashboard > Câmeras > Transferir {c['code']}")
 
 
