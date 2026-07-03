@@ -1,18 +1,10 @@
-# 7Sense CM Cloud v1.9.6
+# 7Sense CM Cloud v1.9.7
 
-Correção de ambiente Operação x Demonstração.
+Correção do modo demonstração:
 
-## Alterações
-- Sistema entra por padrão em **Modo Operação Oficial** no login.
-- Modo Demonstração virou ambiente separado, ativado manualmente.
-- Dados oficiais e dados demo não se misturam.
-- QR Codes de demonstração usam prefixo **7S-DEMO-CAM-***.
-- QR Codes oficiais continuam usando **7S-CAM-***.
-- Botão **Voltar ao modo operação** retorna ao painel oficial sem apagar dados reais.
-- Botão **Reiniciar demonstração** recarrega somente os dados demo.
-
-## Atualização
-1. Copie os arquivos desta pasta para o repositório `7sense-cm-cloud`.
-2. Commit: `v1.9.6 separacao operacao demonstracao`
-3. Push origin.
-4. Render: Manual Deploy > Clear build cache & deploy.
+- Sistema abre sempre no modo operação oficial.
+- Entrar no modo demonstração não limpa o banco oficial.
+- Dados de demonstração usam `demo=1` e códigos `7S-DEMO-CAM-900+`.
+- Botão "Voltar ao modo operação" apenas retorna ao ambiente oficial.
+- QR Codes de demonstração não conflitam com QR Codes reais.
+- Evita travamento/erro no endpoint `/demo/load` no PostgreSQL/Supabase.

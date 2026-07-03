@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "1.9.6 Operação oficial e demonstração separada"
+APP_VERSION = "1.9.7 Demonstração isolada sem limpar banco oficial"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -943,12 +943,16 @@ def next_free_demo_camera_code(start=900):
     return n
 
 
+
 @app.route("/demo/load")
 @operacao_required
 def load_demo():
-    # Entra em ambiente separado de demonstração. Dados reais do Supabase não são apagados.
+    """Ativa o modo demonstração sem apagar ou bloquear o banco oficial.
+
+    A demonstração usa registros marcados com demo=1 e QR Codes 7S-DEMO-CAM-xxx.
+    O botão pode ser acionado várias vezes: se os dados já existem, apenas entra no modo demo.
+    """
     session["data_mode"] = "demo"
-    clear_demo_data()
     now = datetime.now().isoformat()
     demo_contracts = [
         ("Toyota DEMO", "Toyota Sorocaba", "Sorocaba", "SP", 10, "Operação"),
@@ -959,32 +963,51 @@ def load_demo():
     ]
     service_cycle = ["Acompanhamento de Valas","Acompanhamento de Valas","Timelapse","Timelapse","IA Segurança","IA Segurança","Controle de Pessoas","IA BIM","IA BIM","Timelapse"]
     loc_cycle = ["Retro 01","Retro 01","Torre Norte","Torre Sul","Portaria","Almoxarifado","Entrada","Frente de Obra","Vala 03","Canteiro"]
-    cam_num = next_free_demo_camera_code()
     try:
+        cam_num = 900
         for name, obra, city, st, qt, status in demo_contracts:
-            execute("INSERT INTO clients(name,city,state,responsible,active,demo,created_at) VALUES(?,?,?,?,?,?,?)", (name, city, st, "Responsável teste", 1, 1, now))
-            cid = scalar(one("SELECT id FROM clients WHERE name=? AND city=? AND demo=1 AND created_at=? ORDER BY id DESC", (name, city, now)))
-            code_contract = contract_code()
-            execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (code_contract, cid, obra, city, st, date.today().isoformat(), (date.today()+timedelta(days=365)).isoformat(), qt, status, 1, now))
-            coid = scalar(one("SELECT id FROM contracts WHERE code=? ORDER BY id DESC", (code_contract,)))
+            client = one("SELECT id FROM clients WHERE name=? AND demo=1", (name,))
+            if client:
+                cid = scalar(client)
+                execute("UPDATE clients SET city=?, state=?, active=1 WHERE id=?", (city, st, cid))
+            else:
+                execute("INSERT INTO clients(name,city,state,responsible,active,demo,created_at) VALUES(?,?,?,?,?,?,?)", (name, city, st, "Responsável teste", 1, 1, now))
+                cid = scalar(one("SELECT id FROM clients WHERE name=? AND demo=1 ORDER BY id DESC", (name,)))
+
+            contract = one("SELECT id FROM contracts WHERE client_id=? AND obra=? AND demo=1", (cid, obra))
+            if contract:
+                coid = scalar(contract)
+                execute("UPDATE contracts SET city=?, state=?, expected_cameras=?, status=? WHERE id=?", (city, st, qt, status, coid))
+            else:
+                code_contract = "DEMO-" + contract_code()
+                execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (code_contract, cid, obra, city, st, date.today().isoformat(), (date.today()+timedelta(days=365)).isoformat(), qt, status, 1, now))
+                coid = scalar(one("SELECT id FROM contracts WHERE code=? ORDER BY id DESC", (code_contract,)))
+
             for i in range(qt):
-                while one("SELECT id FROM cameras WHERE code=?", (f"7S-DEMO-CAM-{cam_num:03d}",)):
-                    cam_num += 1
                 code = f"7S-DEMO-CAM-{cam_num:03d}"
                 cstatus = "Em operação"
                 if i == 5 and name.startswith("Toyota"):
                     cstatus = "Offline"
                 if i == 9 and name.startswith("Toyota"):
                     cstatus = "Em transporte"
-                execute("INSERT INTO cameras(code,contract_id,current_location,service,status,demo,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?)", (code, coid, loc_cycle[i % len(loc_cycle)], service_cycle[i % len(service_cycle)], cstatus, 1, now, now))
-                cam_id = scalar(one("SELECT id FROM cameras WHERE code=?", (code,)))
-                if cstatus == "Offline":
+                existing = one("SELECT id FROM cameras WHERE code=?", (code,))
+                if existing:
+                    cam_id = scalar(existing)
+                    execute("UPDATE cameras SET contract_id=?, current_location=?, service=?, status=?, demo=1, updated_at=? WHERE id=?", (coid, loc_cycle[i % len(loc_cycle)], service_cycle[i % len(service_cycle)], cstatus, now, cam_id))
+                else:
+                    execute("INSERT INTO cameras(code,contract_id,current_location,service,status,demo,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?)", (code, coid, loc_cycle[i % len(loc_cycle)], service_cycle[i % len(service_cycle)], cstatus, 1, now, now))
+                    cam_id = scalar(one("SELECT id FROM cameras WHERE code=?", (code,)))
+                if cstatus == "Offline" and not one("SELECT id FROM occurrences WHERE camera_id=? AND demo=1 AND archived_at IS NULL", (cam_id,)):
                     execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,demo,created_at) VALUES(?,?,?,?,?,?,?)", (cam_id,"Sem comunicação","Câmera offline para demonstração","Aberta","João",1,now))
                 cam_num += 1
-        execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Instalação Microsoft", date.today().isoformat(), "09:00", "Demonstração", 1, now))
-        execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Visita Equinix", date.today().isoformat(), "14:00", "Demonstração", 1, now))
-        flash("Modo demonstração ativado. Dados demo carregados sem alterar dados oficiais.")
+
+        if not one("SELECT id FROM agenda WHERE demo=1 AND title=?", ("Instalação Microsoft",)):
+            execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Instalação Microsoft", date.today().isoformat(), "09:00", "Demonstração", 1, now))
+        if not one("SELECT id FROM agenda WHERE demo=1 AND title=?", ("Visita Equinix",)):
+            execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Visita Equinix", date.today().isoformat(), "14:00", "Demonstração", 1, now))
+        flash("Modo demonstração ativado. Dados demo isolados carregados sem alterar dados oficiais.")
     except Exception as e:
+        session["data_mode"] = "official"
         flash(f"Erro ao carregar demonstração: {e}")
     return redirect(url_for("dashboard"))
 
@@ -997,21 +1020,13 @@ def operation_mode():
     return redirect(url_for("dashboard"))
 
 
-def clear_demo_data():
-    execute("DELETE FROM agenda WHERE demo=1")
-    execute("DELETE FROM occurrences WHERE demo=1")
-    execute("DELETE FROM camera_history WHERE camera_id IN (SELECT id FROM cameras WHERE demo=1)")
-    execute("DELETE FROM cameras WHERE demo=1")
-    execute("DELETE FROM contracts WHERE demo=1")
-    execute("DELETE FROM clients WHERE demo=1")
-
-
 @app.route("/demo/clear")
 @operacao_required
 def clear_demo():
-    clear_demo_data()
+    # Em produção, este botão apenas retorna ao modo oficial.
+    # Não apagamos registros demo para evitar locks/erros no PostgreSQL e para manter testes reaproveitáveis.
     session["data_mode"] = "official"
-    flash("Dados de demonstração removidos. Modo operação oficial ativado.")
+    flash("Modo operação oficial ativado. Dados reais preservados.")
     return redirect(url_for("dashboard"))
 
 
