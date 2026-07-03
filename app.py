@@ -2,10 +2,13 @@ import os
 import sqlite3
 from datetime import datetime, date, timedelta
 from functools import wraps
-from flask import Flask, request, redirect, url_for, session, flash, jsonify, render_template_string
+from flask import Flask, request, redirect, url_for, session, flash, jsonify, render_template_string, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
+from io import BytesIO
+import qrcode
+from PIL import Image, ImageDraw, ImageFont
 
-APP_VERSION = "1.5 Campo"
+APP_VERSION = "1.6 Patrimônio e QR"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -16,7 +19,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "7sense-dev-secret-change-me")
 
 SERVICOS = ["IA Segurança", "Timelapse", "IA BIM", "Acompanhamento de Valas", "Controle de Pessoas", "Monitoramento de Equipamentos", "Outro"]
 STATUS_CONTRATO = ["Planejamento", "Implantação", "Operação", "Manutenção", "Encerrado"]
-STATUS_CAMERA = ["Em estoque", "Em transporte", "Chegou na obra", "Instalando", "Em operação", "Offline", "Em manutenção", "Retirada", "Aposentada"]
+STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Em estoque", "Em transporte", "Chegou na obra", "Instalando", "Em operação", "Offline", "Em manutenção", "Retirada", "Aposentada"]
 STATUS_ATENCAO = ["Offline", "Em manutenção"]
 
 
@@ -56,6 +59,15 @@ def init_db():
     execute("""CREATE TABLE IF NOT EXISTS cameras(
         id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, model TEXT, serial TEXT, contract_id INTEGER, current_location TEXT, service TEXT, status TEXT, notes TEXT, demo INTEGER DEFAULT 0, updated_at TEXT, created_at TEXT
     )""")
+    # Migração leve para versões antigas do SQLite: adiciona campos de teste/aprovação se ainda não existirem.
+    try:
+        execute("ALTER TABLE cameras ADD COLUMN tested_approved_at TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        execute("ALTER TABLE cameras ADD COLUMN tested_checklist TEXT")
+    except sqlite3.OperationalError:
+        pass
     execute("""CREATE TABLE IF NOT EXISTS camera_history(
         id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id INTEGER, old_contract_id INTEGER, new_contract_id INTEGER, old_location TEXT, new_location TEXT, old_service TEXT, new_service TEXT, old_status TEXT, new_status TEXT, note TEXT, user_name TEXT, created_at TEXT
     )""")
@@ -122,7 +134,7 @@ def status_class(s):
         return "warn"
     if s in ("Em transporte",):
         return "info"
-    if s in ("Em estoque", "Retirada", "Aposentada"):
+    if s in ("Aguardando teste", "Em estoque", "Retirada", "Aposentada"):
         return "muted"
     return "ok"
 
@@ -304,7 +316,11 @@ def contract_view(id):
 
 def camera_row(c):
     cls = status_class(c["status"])
-    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{c['code']}</b><span>{c['current_location'] or '-'}</span><span>{c['service'] or '-'}</span><span><span class='badge {cls}'>{c['status']}</span></span><span class='actions'><a class='btn small' href='{url_for('camera_view', id=c['id'])}'>Ver</a>{('<a class=\"btn small\" href=\"'+url_for('camera_edit', id=c['id'])+'\">Editar</a> <a class=\"btn small\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a>') if current_user() and current_user()['role']=='operacao' else ''}</span></div>"
+    aprovado = " 🧪" if ("tested_approved_at" in c.keys() and c["tested_approved_at"]) or c["status"] == "Testada e aprovada" else ""
+    qr_btn = f"<a class='btn small' href='{url_for('camera_qr', id=c['id'])}'>📷 QR</a>"
+    test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=c['id'])}'>🧪 Teste</a>" if current_user() and current_user()['role']=='operacao' else ""
+    edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=c['id'])}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=c['id'])}'>Transferir</a>") if current_user() and current_user()['role']=='operacao' else ""
+    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{c['code']}{aprovado}</b><span>{c['current_location'] or '-'}</span><span>{c['service'] or '-'}</span><span><span class='badge {cls}'>{c['status']}</span></span><span class='actions'>{qr_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=c['id'])}'>Ver</a>{edit_btns}</span></div>"
 
 
 @app.route("/cameras")
@@ -371,6 +387,65 @@ def camera_view(id):
     body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p><div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a>{'<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a>' if current_user()['role']=='operacao' else ''}</div></div>
     <div class="panel"><h2>Histórico</h2>{hist_html or '<p>Sem histórico.</p>'}</div><div class="panel"><h2>Ocorrências</h2>{occ_html or '<p>Sem ocorrências.</p>'}</div>"""
     return page(body, breadcrumb=f"Dashboard > Câmeras > {c['code']}")
+
+
+def build_qr_label(code):
+    qr = qrcode.QRCode(version=2, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=14, border=4)
+    qr.add_data(code)
+    qr.make(fit=True)
+    qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    label = Image.new("RGB", (900, 1100), "white")
+    draw = ImageDraw.Draw(label)
+    try:
+        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 68)
+        font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
+        font_code = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
+    except Exception:
+        font_title = font_sub = font_code = None
+    draw.text((450, 70), "7SENSE", anchor="mm", font=font_title, fill=(20, 70, 140))
+    draw.text((450, 132), "Data into Action", anchor="mm", font=font_sub, fill=(90, 90, 90))
+    qr_img = qr_img.resize((650, 650), Image.Resampling.NEAREST)
+    label.paste(qr_img, (125, 185))
+    draw.rounded_rectangle((210, 875, 690, 955), radius=18, fill=(20,70,140))
+    draw.text((450, 915), code, anchor="mm", font=font_code, fill="white")
+    draw.text((450, 1000), "Patrimônio 7Sense", anchor="mm", font=font_sub, fill=(70, 70, 70))
+    return label
+
+
+@app.route("/cameras/<int:id>/qr")
+@login_required
+def camera_qr(id):
+    c = one("SELECT * FROM cameras WHERE id=?", (id,))
+    if not c:
+        flash("Câmera não encontrada.")
+        return redirect(url_for("cameras"))
+    img = build_qr_label(c["code"])
+    bio = BytesIO()
+    img.save(bio, "PNG")
+    bio.seek(0)
+    return send_file(bio, mimetype="image/png", as_attachment=True, download_name=f"{c['code']}_etiqueta_qr.png")
+
+
+@app.route("/cameras/<int:id>/approve", methods=["GET", "POST"])
+@operacao_required
+def camera_approve(id):
+    c = one("SELECT * FROM cameras WHERE id=?", (id,))
+    if not c:
+        flash("Câmera não encontrada.")
+        return redirect(url_for("cameras"))
+    checklist_items = ["Carregada", "Cartão SD verificado", "Limpeza realizada", "Teste de imagem OK", "Teste de comunicação OK", "Estado físico OK"]
+    if request.method == "POST":
+        checked = [i for i in checklist_items if request.form.get(i)]
+        note = request.form.get("note", "")
+        checklist = "; ".join(checked) + ((" | " + note) if note else "")
+        old_status = c["status"]
+        execute("UPDATE cameras SET status=?, tested_approved_at=?, tested_checklist=?, updated_at=? WHERE id=?", ("Testada e aprovada", datetime.now().isoformat(), checklist, datetime.now().isoformat(), id))
+        execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Testada e aprovada", "Checklist: " + checklist, current_user()["name"], datetime.now().isoformat()))
+        flash("Câmera testada e aprovada para novo envio.")
+        return redirect(url_for("camera_view", id=id))
+    boxes = "".join([f"<label><input type='checkbox' name='{item}' value='1'> {item}</label><br>" for item in checklist_items])
+    body = f"""<div class='panel'><h2>🧪 Testar e Aprovar {c['code']}</h2><p>Use este checklist quando a câmera retornar de obra ou antes de liberar para novo cliente.</p><form method='post' class='formgrid'><div class='full card'>{boxes}</div><label class='full'>Observações<textarea name='note' placeholder='Ex.: bateria ok, lente limpa, cartão substituído...'></textarea></label><div class='full'><button class='primary'>Aprovar câmera</button></div></form></div>"""
+    return page(body, breadcrumb=f"Dashboard > Câmeras > Teste {c['code']}")
 
 
 @app.route("/cameras/<int:id>/transfer", methods=["GET", "POST"])
@@ -509,8 +584,10 @@ def campo():
         max_done = -1
         # Regra v1.5.1: se a câmera estiver em estoque, o fluxo de campo reinicia.
         # Isso permite reutilizar uma câmera ou testar um QR sem herdar etapas antigas.
-        if camera["status"] == "Em estoque":
+        if camera["status"] in ("Em estoque", "Testada e aprovada"):
             max_done = -1
+        elif camera["status"] == "Aguardando teste":
+            max_done = -2
         elif camera["status"] in workflow:
             max_done = max(max_done, workflow.index(camera["status"]))
         else:
@@ -518,7 +595,7 @@ def campo():
             for hs in hist_statuses:
                 if hs["new_status"] in workflow:
                     max_done = max(max_done, workflow.index(hs["new_status"]))
-        next_step = workflow[max_done + 1] if max_done + 1 < len(workflow) else None
+        next_step = None if max_done == -2 else (workflow[max_done + 1] if max_done + 1 < len(workflow) else None)
 
         if action == "PROBLEMA":
             problem = request.form.get("problem") or "Problema operacional"
@@ -533,9 +610,16 @@ def campo():
                 old_status, old_loc = camera["status"], camera["current_location"]
                 new_loc = request.form.get("local") or camera["current_location"]
                 note = request.form.get("note") or ""
-                execute("UPDATE cameras SET status=?, current_location=?, updated_at=? WHERE id=?", (action, new_loc, datetime.now().isoformat(), camera["id"]))
-                execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], old_loc, new_loc, old_status, action, note, "Campo", datetime.now().isoformat()))
-                msg = f"Etapa registrada: {action_labels[action]}."
+                if action == "Retirada":
+                    # Retirada encerra o ciclo operacional: limpa contrato/local/serviço e exige novo teste antes de reutilizar.
+                    reset_note = (note + " | " if note else "") + "Retirada confirmada. Dados operacionais limpos; câmera aguardando teste."
+                    execute("UPDATE cameras SET status=?, contract_id=NULL, current_location='', service='', updated_at=? WHERE id=?", ("Aguardando teste", datetime.now().isoformat(), camera["id"]))
+                    execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], old_loc, "", old_status, "Retirada / Aguardando teste", reset_note, "Campo", datetime.now().isoformat()))
+                    msg = "Câmera retirada. Dados operacionais limpos e câmera enviada para Aguardando teste."
+                else:
+                    execute("UPDATE cameras SET status=?, current_location=?, updated_at=? WHERE id=?", (action, new_loc, datetime.now().isoformat(), camera["id"]))
+                    execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], old_loc, new_loc, old_status, action, note, "Campo", datetime.now().isoformat()))
+                    msg = f"Etapa registrada: {action_labels[action]}."
         camera = load_camera_by_code(code)
 
     if camera:
@@ -551,8 +635,10 @@ def campo():
         max_done = -1
         # Regra v1.5.1: se a câmera estiver em estoque, o fluxo de campo reinicia.
         # Isso permite reutilizar uma câmera ou testar um QR sem herdar etapas antigas.
-        if camera["status"] == "Em estoque":
+        if camera["status"] in ("Em estoque", "Testada e aprovada"):
             max_done = -1
+        elif camera["status"] == "Aguardando teste":
+            max_done = -2
         elif camera["status"] in workflow:
             max_done = max(max_done, workflow.index(camera["status"]))
         else:
@@ -560,14 +646,14 @@ def campo():
             for hs in hist_statuses:
                 if hs["new_status"] in workflow:
                     max_done = max(max_done, workflow.index(hs["new_status"]))
-        next_step = workflow[max_done + 1] if max_done + 1 < len(workflow) else None
+        next_step = None if max_done == -2 else (workflow[max_done + 1] if max_done + 1 < len(workflow) else None)
         btns = []
         for idx, step in enumerate(workflow):
             label = action_labels[step]
             if idx <= max_done:
                 btns.append(f'<button type="button" class="done" disabled>✅ {label}</button>')
             elif step == next_step:
-                btns.append(f'<button name="action" value="{step}" class="active-step">{label}</button>')
+                confirm = ' onclick="return confirm(\'Confirmar retirada? Os dados operacionais serão limpos e a câmera ficará aguardando teste.\')"' if step == 'Retirada' else ''; btns.append(f'<button name="action" value="{step}" class="active-step"{confirm}>{label}</button>')
             else:
                 btns.append(f'<button type="button" class="locked" disabled>🔒 {label}</button>')
         buttons_html = "".join(btns)
@@ -582,7 +668,7 @@ body{font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;color:#0f172a;mar
 {% if msg %}<div class="card"><b>{{msg}}</b></div>{% endif %}
 <div class="card"><button type="button" id="startQr">📷 Ler QR Code</button><div id="reader" class="reader" style="display:none"></div><form method="post" id="lookup"><label>Código da câmera<input id="code" name="code" placeholder="7S-CAM-001" value="{{request.form.get('code','') or request.args.get('code','')}}"></label><button>Buscar câmera</button></form><p class="tag">Se a câmera do celular não abrir, digite o código manualmente.</p></div>
 {% if camera %}<div class="card"><h2>{{camera['code']}}</h2><p><span class="badge">Status atual: {{camera['status']}}</span></p><p><b>Cliente:</b> {{camera['client_name'] or '-'}}</p><p><b>Obra:</b> {{camera['obra'] or '-'}}</p><p><b>Local:</b> {{camera['current_location'] or '-'}}</p><p><b>Serviço:</b> {{camera['service'] or '-'}}</p></div>
-<div class="card"><form method="post"><input type="hidden" name="code" value="{{camera['code']}}"><label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label><p class="tag"><b>Fluxo operacional</b></p><p class="small">Etapas concluídas ficam verdes e bloqueadas. Somente a próxima etapa fica liberada.</p>{{buttons_html|safe}}<hr style="border:0;border-top:1px solid #eef2f7;margin:18px 0"><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="PROBLEMA" class="danger">🔴 Registrar problema</button></form></div>
+<div class="card"><form method="post"><input type="hidden" name="code" value="{{camera['code']}}"><label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label><p class="tag"><b>Fluxo operacional</b></p><p class="small">Etapas concluídas ficam verdes e bloqueadas. Somente a próxima etapa fica liberada.</p>{% if camera['status'] == 'Aguardando teste' %}<p style="background:#fef3c7;border-radius:12px;padding:12px"><b>🧪 Aguardando teste:</b> esta câmera precisa ser testada e aprovada no painel antes de ser enviada para nova obra.</p>{% endif %}{{buttons_html|safe}}<hr style="border:0;border-top:1px solid #eef2f7;margin:18px 0"><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="PROBLEMA" class="danger">🔴 Registrar problema</button></form></div>
 <div class="card"><h3>Histórico recente</h3><div class="timeline">{% for h in history %}<div class="timeline-item"><b>{{h['new_status']}}</b><br><span class="small">{{h['created_at'][:16].replace('T',' ')}} · {{h['user_name'] or 'Campo'}}</span><br><span class="small">{{h['note'] or ''}}</span></div>{% else %}<p class="tag">Sem histórico ainda.</p>{% endfor %}</div></div>{% endif %}
 </div><script>let scanner=null;document.getElementById('startQr').addEventListener('click', async()=>{const r=document.getElementById('reader');r.style.display='block'; if(!window.Html5Qrcode){alert('Leitor QR não carregou. Digite o código manualmente.');return;} scanner=new Html5Qrcode('reader'); try{await scanner.start({facingMode:'environment'},{fps:10,qrbox:220}, txt=>{document.getElementById('code').value=txt.trim(); scanner.stop(); document.getElementById('lookup').submit();});}catch(e){alert('Não foi possível abrir a câmera. Verifique HTTPS/permissão ou digite o código manualmente.');}});</script>
 </body></html>
