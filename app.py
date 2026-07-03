@@ -6,30 +6,16 @@ from flask import Flask, request, redirect, url_for, session, flash, jsonify, re
 from werkzeug.security import generate_password_hash, check_password_hash
 from io import BytesIO
 import qrcode
-import base64
 from PIL import Image, ImageDraw, ImageFont
 
-try:
-    import psycopg2
-    import psycopg2.extras
-except Exception:  # Ambiente local sem PostgreSQL instalado
-    psycopg2 = None
-
-APP_VERSION = "1.9 Foto da instalação + visão hierárquica"
+APP_VERSION = "1.6 Patrimônio e QR"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(DATA_DIR, "7sense_cm.sqlite3"))
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-USE_POSTGRES = bool(DATABASE_URL)
-
-# Supabase geralmente exige SSL. Se a URL não trouxer sslmode, adicionamos automaticamente.
-if USE_POSTGRES and "sslmode=" not in DATABASE_URL:
-    DATABASE_URL += ("&" if "?" in DATABASE_URL else "?") + "sslmode=require"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "7sense-dev-secret-change-me")
-app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # limite de upload para foto de instalação
 
 SERVICOS = ["IA Segurança", "Timelapse", "IA BIM", "Acompanhamento de Valas", "Controle de Pessoas", "Monitoramento de Equipamentos", "Outro"]
 STATUS_CONTRATO = ["Planejamento", "Implantação", "Operação", "Manutenção", "Encerrado"]
@@ -37,78 +23,27 @@ STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Em estoque", "Em tra
 STATUS_ATENCAO = ["Offline", "Em manutenção"]
 
 
-def _pg_sql(sql):
-    """Adapta SQL simples do SQLite para PostgreSQL sem mudar o restante do sistema."""
-    if not USE_POSTGRES:
-        return sql
-    sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
-    sql = sql.replace("SELECT last_insert_rowid()", "SELECT lastval()")
-    sql = sql.replace("?", "%s")
-    return sql
-
-
 def db():
-    if USE_POSTGRES:
-        if psycopg2 is None:
-            raise RuntimeError("DATABASE_URL definido, mas psycopg2 não está instalado. Verifique requirements.txt")
-        return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.DictCursor)
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     return con
 
 
 def execute(sql, params=()):
-    con = db()
-    try:
-        if USE_POSTGRES:
-            cur = con.cursor()
-            cur.execute(_pg_sql(sql), params)
-            con.commit()
-            return cur
+    with db() as con:
         cur = con.execute(sql, params)
         con.commit()
         return cur
-    except Exception:
-        try:
-            con.rollback()
-        except Exception:
-            pass
-        raise
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
 
 
 def query(sql, params=()):
-    con = db()
-    try:
-        if USE_POSTGRES:
-            cur = con.cursor()
-            cur.execute(_pg_sql(sql), params)
-            return cur.fetchall()
+    with db() as con:
         return con.execute(sql, params).fetchall()
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
 
 
 def one(sql, params=()):
-    con = db()
-    try:
-        if USE_POSTGRES:
-            cur = con.cursor()
-            cur.execute(_pg_sql(sql), params)
-            return cur.fetchone()
+    with db() as con:
         return con.execute(sql, params).fetchone()
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
 
 
 def init_db():
@@ -127,20 +62,11 @@ def init_db():
     # Migração leve para versões antigas do SQLite: adiciona campos de teste/aprovação se ainda não existirem.
     try:
         execute("ALTER TABLE cameras ADD COLUMN tested_approved_at TEXT")
-    except Exception:
+    except sqlite3.OperationalError:
         pass
     try:
         execute("ALTER TABLE cameras ADD COLUMN tested_checklist TEXT")
-    except Exception:
-        pass
-    # V1.9: foto opcional da última instalação, salva como texto base64 no banco permanente.
-    try:
-        execute("ALTER TABLE cameras ADD COLUMN last_install_photo TEXT")
-    except Exception:
-        pass
-    try:
-        execute("ALTER TABLE camera_history ADD COLUMN install_photo TEXT")
-    except Exception:
+    except sqlite3.OperationalError:
         pass
     execute("""CREATE TABLE IF NOT EXISTS camera_history(
         id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id INTEGER, old_contract_id INTEGER, new_contract_id INTEGER, old_location TEXT, new_location TEXT, old_service TEXT, new_service TEXT, old_status TEXT, new_status TEXT, note TEXT, user_name TEXT, created_at TEXT
@@ -213,21 +139,12 @@ def status_class(s):
     return "ok"
 
 
-def rv(row, key, default=""):
-    """Lê um campo de sqlite.Row sem quebrar quando a consulta não trouxe a coluna."""
-    try:
-        v = row[key]
-        return v if v is not None else default
-    except Exception:
-        return default
-
-
 BASE = r"""
 <!doctype html><html lang="pt-br"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>7Sense CM</title>
 <style>
 :root{--bg:#f5f7fb;--card:#fff;--text:#0f172a;--muted:#64748b;--border:#dbe3ef;--accent:#0f5fff;--ok:#0f9f6e;--danger:#dc2626;--warn:#d97706;--info:#2563eb;--softdanger:#fee2e2;--softwarn:#fef3c7;--softok:#dcfce7}
-*{box-sizing:border-box} body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)} a{text-decoration:none;color:inherit} .wrap{max-width:1200px;margin:0 auto;padding:18px}.top{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:14px}.brand{font-weight:800;font-size:20px}.tag{color:var(--muted);font-size:13px}.nav{display:flex;gap:8px;flex-wrap:wrap}.btn,.nav a,button{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-size:15px;cursor:pointer;color:var(--text)}.btn.primary,button.primary{background:var(--accent);color:white;border-color:var(--accent)}.btn.danger{background:var(--danger);color:white}.btn.small{padding:6px 10px;font-size:13px}.grid{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:18px}.metric{display:block}.metric h3{margin:0 0 8px;font-size:18px}.metric b{font-size:36px}.metric.danger{border-color:#fecaca;background:#fff7f7}.metric:hover{box-shadow:0 6px 20px rgba(15,23,42,.08)}.search{display:flex;gap:8px;flex:1;max-width:420px}.search input,input,select,textarea{width:100%;border:1px solid var(--border);border-radius:12px;padding:11px;font-size:15px;background:#fff}textarea{min-height:90px}.panel{background:#fff;border:1px solid var(--border);border-radius:18px;padding:16px;margin-top:12px}.row{display:grid;grid-template-columns:1.2fr 1.2fr 1fr .8fr auto;gap:8px;align-items:center;border-bottom:1px solid #eef2f7;padding:11px 4px}.row:last-child{border-bottom:none}.row.camera{grid-template-columns:.9fr 1fr 1fr 1fr 1fr 1.4fr}.row.danger{background:#fff1f2;color:#991b1b;border-radius:12px;padding-left:10px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:13px;border:1px solid var(--border);background:#f8fafc}.badge.ok{background:var(--softok);color:#166534}.badge.danger{background:var(--softdanger);color:#991b1b}.badge.warn{background:var(--softwarn);color:#92400e}.badge.info{background:#dbeafe;color:#1e40af}.badge.muted{background:#e5e7eb;color:#374151}.filters{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.filters a{border:1px solid var(--border);background:#fff;padding:8px 12px;border-radius:999px}.filters a.active{background:var(--accent);color:#fff}.flash{background:#fef3c7;border:1px solid #fde68a;border-radius:12px;padding:10px;margin:10px 0}.breadcrumb{font-size:14px;color:var(--muted);margin:8px 0 14px}.actions{display:flex;gap:8px;flex-wrap:wrap}.formgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.full{grid-column:1/-1}.mobile-card{max-width:560px;margin:0 auto}.hero{font-size:22px;font-weight:800}.hidden{display:none!important}@media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}.row,.row.camera{display:block}.row>*{margin:5px 0}.formgrid{grid-template-columns:1fr}.top{display:block}.nav{margin-top:10px}.search{max-width:none;margin-top:10px}}
+*{box-sizing:border-box} body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)} a{text-decoration:none;color:inherit} .wrap{max-width:1200px;margin:0 auto;padding:18px}.top{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:14px}.brand{font-weight:800;font-size:20px}.tag{color:var(--muted);font-size:13px}.nav{display:flex;gap:8px;flex-wrap:wrap}.btn,.nav a,button{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-size:15px;cursor:pointer;color:var(--text)}.btn.primary,button.primary{background:var(--accent);color:white;border-color:var(--accent)}.btn.danger{background:var(--danger);color:white}.btn.small{padding:6px 10px;font-size:13px}.grid{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:18px}.metric{display:block}.metric h3{margin:0 0 8px;font-size:18px}.metric b{font-size:36px}.metric.danger{border-color:#fecaca;background:#fff7f7}.metric:hover{box-shadow:0 6px 20px rgba(15,23,42,.08)}.search{display:flex;gap:8px;flex:1;max-width:420px}.search input,input,select,textarea{width:100%;border:1px solid var(--border);border-radius:12px;padding:11px;font-size:15px;background:#fff}textarea{min-height:90px}.panel{background:#fff;border:1px solid var(--border);border-radius:18px;padding:16px;margin-top:12px}.row{display:grid;grid-template-columns:1.2fr 1.2fr 1fr .8fr auto;gap:8px;align-items:center;border-bottom:1px solid #eef2f7;padding:11px 4px}.row:last-child{border-bottom:none}.row.camera{grid-template-columns:1fr 1fr 1fr 1fr 1.4fr}.row.danger{background:#fff1f2;color:#991b1b;border-radius:12px;padding-left:10px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:13px;border:1px solid var(--border);background:#f8fafc}.badge.ok{background:var(--softok);color:#166534}.badge.danger{background:var(--softdanger);color:#991b1b}.badge.warn{background:var(--softwarn);color:#92400e}.badge.info{background:#dbeafe;color:#1e40af}.badge.muted{background:#e5e7eb;color:#374151}.filters{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.filters a{border:1px solid var(--border);background:#fff;padding:8px 12px;border-radius:999px}.filters a.active{background:var(--accent);color:#fff}.flash{background:#fef3c7;border:1px solid #fde68a;border-radius:12px;padding:10px;margin:10px 0}.breadcrumb{font-size:14px;color:var(--muted);margin:8px 0 14px}.actions{display:flex;gap:8px;flex-wrap:wrap}.formgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.full{grid-column:1/-1}.mobile-card{max-width:560px;margin:0 auto}.hero{font-size:22px;font-weight:800}.hidden{display:none!important}@media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}.row,.row.camera{display:block}.row>*{margin:5px 0}.formgrid{grid-template-columns:1fr}.top{display:block}.nav{margin-top:10px}.search{max-width:none;margin-top:10px}}
 </style>
 </head><body><div class="wrap">
 <div class="top"><div><div class="brand">7Sense – Data into Action</div><div class="tag">Contract Manager {{version}}</div></div>
@@ -389,7 +306,7 @@ def contract_form(r=None):
 @login_required
 def contract_view(id):
     r = one("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.id=?", (id,))
-    cams = query("SELECT ca.*, co.obra, cl.name client_name FROM cameras ca LEFT JOIN contracts co ON co.id=ca.contract_id LEFT JOIN clients cl ON cl.id=co.client_id WHERE ca.contract_id=? ORDER BY ca.code", (id,))
+    cams = query("SELECT * FROM cameras WHERE contract_id=? ORDER BY code", (id,))
     items = "".join([camera_row(c) for c in cams])
     body = f"""<div class="panel"><h2>{r['client_name']} – {r['obra']}</h2><p><span class="badge {status_class(r['status'])}">{r['status']}</span> · {r['city']}/{r['state']} · Previstas: {r['expected_cameras']}</p>
     <div class="actions"><a class="btn" href="{url_for('contracts')}">Voltar</a>{'<a class=\"btn primary\" href=\"'+url_for('camera_new', contract_id=r['id'])+'\">Adicionar câmera</a>' if current_user()['role']=='operacao' else ''}</div></div>
@@ -403,9 +320,7 @@ def camera_row(c):
     qr_btn = f"<a class='btn small' href='{url_for('camera_qr', id=c['id'])}'>📷 QR</a>"
     test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=c['id'])}'>🧪 Teste</a>" if current_user() and current_user()['role']=='operacao' else ""
     edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=c['id'])}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=c['id'])}'>Transferir</a>") if current_user() and current_user()['role']=='operacao' else ""
-    cliente = rv(c, 'client_name', '-') or '-'
-    obra = rv(c, 'obra', '-') or '-'
-    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{c['code']}{aprovado}</b><span><b>{cliente}</b><br><small>{obra}</small></span><span>{c['current_location'] or '-'}</span><span>{c['service'] or '-'}</span><span><span class='badge {cls}'>{c['status']}</span></span><span class='actions'>{qr_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=c['id'])}'>Ver</a>{edit_btns}</span></div>"
+    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{c['code']}{aprovado}</b><span>{c['current_location'] or '-'}</span><span>{c['service'] or '-'}</span><span><span class='badge {cls}'>{c['status']}</span></span><span class='actions'>{qr_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=c['id'])}'>Ver</a>{edit_btns}</span></div>"
 
 
 @app.route("/cameras")
@@ -418,45 +333,11 @@ def cameras():
         where = "WHERE ca.status IN ('Offline','Em manutenção')"
     elif status != "Todas":
         where = "WHERE ca.status=?"; params = (status,)
-    rows = query(f"""SELECT ca.*, co.obra, co.city contract_city, co.state contract_state, cl.name client_name
-                    FROM cameras ca
-                    LEFT JOIN contracts co ON co.id=ca.contract_id
-                    LEFT JOIN clients cl ON cl.id=co.client_id
-                    {where}
-                    ORDER BY cl.name, co.obra, ca.code""", params)
-    filters = ["Todas", "Em operação", "Offline", "Em manutenção", "Em estoque", "Em transporte", "Retirada", "Testada e aprovada", "Aguardando teste"]
+    rows = query(f"SELECT ca.*, co.obra, cl.name client_name FROM cameras ca LEFT JOIN contracts co ON co.id=ca.contract_id LEFT JOIN clients cl ON cl.id=co.client_id {where} ORDER BY ca.code", params)
+    filters = ["Todas", "Em operação", "Offline", "Em manutenção", "Em estoque", "Em transporte", "Retirada"]
     fhtml = "".join([f"<a class='{ 'active' if status==s else ''}' href='{url_for('cameras', status=s)}'>{s}</a>" for s in filters])
-
-    # V1.9: visão hierárquica para operação real: Status > Cliente > Obra > Câmeras.
-    # Mesmo em filtros específicos, primeiro aparece o cliente, depois a obra/contrato.
-    groups = {}
-    for c in rows:
-        cliente = rv(c, 'client_name', 'Sem cliente / estoque') or 'Sem cliente / estoque'
-        obra_nome = rv(c, 'obra', 'Sem obra / estoque') or 'Sem obra / estoque'
-        cidade = rv(c, 'contract_city', '') or ''
-        estado = rv(c, 'contract_state', '') or ''
-        obra_label = obra_nome + (f" · {cidade}/{estado}" if cidade or estado else "")
-        groups.setdefault(cliente, {}).setdefault(obra_label, []).append(c)
-
-    blocks = []
-    for cliente, obras in groups.items():
-        total_cliente = sum(len(v) for v in obras.values())
-        obra_blocks = []
-        for obra, cams in obras.items():
-            cam_rows = "".join([camera_row(cam) for cam in cams])
-            obra_blocks.append(f"""<details class='card' open>
-                <summary style='cursor:pointer;font-weight:700'>🏗 {obra} <span class='badge muted'>{len(cams)} câmera(s)</span></summary>
-                <div style='margin-top:10px'>{cam_rows}</div>
-            </details>""")
-        blocks.append(f"""<details class='panel' open>
-            <summary style='cursor:pointer;font-size:20px;font-weight:800'>👤 {cliente} <span class='badge muted'>{total_cliente} câmera(s)</span></summary>
-            <div style='margin-top:12px'>{''.join(obra_blocks)}</div>
-        </details>""")
-    items = "".join(blocks)
-
-    body = f"""<div class='panel'><div class='actions'><h2 style='flex:1'>Câmeras</h2>{'<a class=\"btn primary\" href=\"'+url_for('camera_new')+'\">Nova câmera</a>' if current_user()['role']=='operacao' else ''}</div>
-    <p class='tag'>Visualização por <b>cliente</b>, depois <b>obra</b>, depois <b>câmera</b>. Assim fica claro antes de qual cliente e obra estamos falando.</p>
-    <div class='filters'>{fhtml}</div>{items or '<p>Nenhuma câmera.</p>'}</div>"""
+    items = "".join([camera_row(c) for c in rows])
+    body = f"<div class='panel'><div class='actions'><h2 style='flex:1'>Câmeras</h2>{'<a class=\"btn primary\" href=\"'+url_for('camera_new')+'\">Nova câmera</a>' if current_user()['role']=='operacao' else ''}</div><div class='filters'>{fhtml}</div>{items or '<p>Nenhuma câmera.</p>'}</div>"
     return page(body, breadcrumb="Dashboard > Câmeras")
 
 
@@ -471,13 +352,7 @@ def camera_edit(id): return camera_form(one("SELECT * FROM cameras WHERE id=?", 
 
 
 def camera_form(r=None, contract_id=None):
-    clients_rows = query("SELECT * FROM clients WHERE active=1 ORDER BY name")
-    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id ORDER BY cl.name, c.obra")
-    selected_contract_id = (r["contract_id"] if r else contract_id)
-    selected_client_id = ""
-    if selected_contract_id:
-        cr = one("SELECT client_id FROM contracts WHERE id=?", (selected_contract_id,))
-        selected_client_id = str(cr["client_id"]) if cr and cr["client_id"] else ""
+    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id ORDER BY c.created_at DESC")
     if request.method == "POST":
         vals = (request.form.get("model"), request.form.get("serial"), request.form.get("contract_id") or None, request.form.get("current_location"), request.form.get("service"), request.form.get("status"), request.form.get("notes"), datetime.now().isoformat())
         if r:
@@ -489,34 +364,15 @@ def camera_form(r=None, contract_id=None):
         flash("Câmera criada.")
         return redirect(url_for("cameras"))
     def val(k): return (r[k] if r else "") or ""
-    client_opts = "<option value=''>Sem cliente / estoque</option>" + "".join([f"<option value='{cl['id']}' {'selected' if selected_client_id==str(cl['id']) else ''}>{cl['name']}</option>" for cl in clients_rows])
-    contract_opts = "<option value='' data-client=''>Sem contrato / estoque</option>" + "".join([f"<option value='{c['id']}' data-client='{c['client_id'] or ''}' {'selected' if selected_contract_id and str(c['id'])==str(selected_contract_id) else ''}>{c['client_name'] or 'Sem cliente'} - {c['obra']}</option>" for c in contracts_rows])
+    contract_opts = "<option value=''>Sem contrato / estoque</option>" + "".join([f"<option value='{c['id']}' {'selected' if (r and r['contract_id']==c['id']) or (contract_id and str(c['id'])==str(contract_id)) else ''}>{c['client_name']} - {c['obra']}</option>" for c in contracts_rows])
     service_opts = "".join([f"<option {'selected' if val('service')==s else ''}>{s}</option>" for s in SERVICOS])
     status_opts = "".join([f"<option {'selected' if val('status')==s else ''}>{s}</option>" for s in STATUS_CAMERA])
     code_field = f"<label>Código<input name='code' value='{next_camera_code()}'></label>" if not r else f"<label>Código<input value='{val('code')}' disabled></label>"
-    body = f"""<div class="panel"><h2>{'Editar' if r else 'Nova'} Câmera</h2>
-    <p class="tag">Escolha primeiro o <b>Cliente</b> e depois a <b>Obra/Contrato</b>. Isso evita confusão quando o mesmo cliente tiver várias obras.</p>
-    <form method="post" class="formgrid">{code_field}
+    body = f"""<div class="panel"><h2>{'Editar' if r else 'Nova'} Câmera</h2><form method="post" class="formgrid">{code_field}
     <label>Modelo<input name="model" value="{val('model')}"></label><label>Nº Série<input name="serial" value="{val('serial')}"></label>
-    <label>Cliente<select id="client_select" name="client_select">{client_opts}</select></label><label>Obra / contrato atual<select id="contract_select" name="contract_id">{contract_opts}</select></label>
-    <label>Local atual<input name="current_location" value="{val('current_location')}"></label><label>Serviço<select name="service">{service_opts}</select></label>
-    <label>Status<select name="status">{status_opts}</select></label><label class="full">Observações<textarea name="notes">{val('notes')}</textarea></label>
-    <div class="full"><button class="primary">Salvar</button></div></form></div>
-    <script>
-    function filtrarContratos(){{
-      const cliente = document.getElementById('client_select').value;
-      const contrato = document.getElementById('contract_select');
-      let selectedStillVisible = false;
-      Array.from(contrato.options).forEach(opt => {{
-        const show = !opt.value || !cliente || opt.dataset.client === cliente;
-        opt.hidden = !show;
-        if (opt.selected && show) selectedStillVisible = true;
-      }});
-      if (!selectedStillVisible) contrato.value = '';
-    }}
-    document.getElementById('client_select').addEventListener('change', filtrarContratos);
-    filtrarContratos();
-    </script>"""
+    <label>Contrato atual<select name="contract_id">{contract_opts}</select></label><label>Local atual<input name="current_location" value="{val('current_location')}"></label>
+    <label>Serviço<select name="service">{service_opts}</select></label><label>Status<select name="status">{status_opts}</select></label>
+    <label class="full">Observações<textarea name="notes">{val('notes')}</textarea></label><div class="full"><button class="primary">Salvar</button></div></form></div>"""
     return page(body, breadcrumb="Dashboard > Câmeras > Formulário")
 
 
@@ -526,14 +382,9 @@ def camera_view(id):
     c = one("SELECT ca.*, co.obra, cl.name client_name FROM cameras ca LEFT JOIN contracts co ON co.id=ca.contract_id LEFT JOIN clients cl ON cl.id=co.client_id WHERE ca.id=?", (id,))
     hist = query("SELECT * FROM camera_history WHERE camera_id=? ORDER BY created_at DESC", (id,))
     occs = query("SELECT * FROM occurrences WHERE camera_id=? ORDER BY created_at DESC", (id,))
-    hist_parts = []
-    for h in hist:
-        foto = rv(h, 'install_photo', '')
-        foto_html = f"<br><img src='{foto}' alt='Foto da instalação' style='max-width:220px;border-radius:12px;border:1px solid #dbe3ef;margin-top:8px'>" if foto else ""
-        hist_parts.append(f"<div class='row'><b>{h['created_at'][:16]}</b><span>{h['old_status'] or '-'} → {h['new_status'] or '-'}</span><span>{h['old_location'] or '-'} → {h['new_location'] or '-'}</span><span>{h['user_name'] or ''}</span><span>{h['note'] or ''}{foto_html}</span></div>")
-    hist_html = "".join(hist_parts)
+    hist_html = "".join([f"<div class='row'><b>{h['created_at'][:16]}</b><span>{h['old_status'] or '-'} → {h['new_status'] or '-'}</span><span>{h['old_location'] or '-'} → {h['new_location'] or '-'}</span><span>{h['user_name'] or ''}</span><span>{h['note'] or ''}</span></div>" for h in hist])
     occ_html = "".join([f"<div class='row'><b>{o['title']}</b><span>{o['problem']}</span><span>{o['status']}</span><span>{o['created_at'][:16]}</span><span></span></div>" for o in occs])
-    body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p>{f"<p><b>Última foto da instalação:</b><br><img src='{rv(c, 'last_install_photo', '')}' alt='Foto da instalação' style='max-width:320px;border-radius:14px;border:1px solid #dbe3ef;margin-top:8px'></p>" if rv(c, 'last_install_photo', '') else ''}<div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a>{'<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a>' if current_user()['role']=='operacao' else ''}</div></div>
+    body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p><div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a>{'<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a>' if current_user()['role']=='operacao' else ''}</div></div>
     <div class="panel"><h2>Histórico</h2>{hist_html or '<p>Sem histórico.</p>'}</div><div class="panel"><h2>Ocorrências</h2>{occ_html or '<p>Sem ocorrências.</p>'}</div>"""
     return page(body, breadcrumb=f"Dashboard > Câmeras > {c['code']}")
 
@@ -601,12 +452,7 @@ def camera_approve(id):
 @operacao_required
 def camera_transfer(id):
     c = one("SELECT * FROM cameras WHERE id=?", (id,))
-    clients_rows = query("SELECT * FROM clients WHERE active=1 ORDER BY name")
-    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id ORDER BY cl.name, c.obra")
-    selected_client_id = ""
-    if c and c["contract_id"]:
-        cr = one("SELECT client_id FROM contracts WHERE id=?", (c["contract_id"],))
-        selected_client_id = str(cr["client_id"]) if cr and cr["client_id"] else ""
+    contracts_rows = query("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id ORDER BY c.created_at DESC")
     if request.method == "POST":
         old = c
         new_contract = request.form.get("contract_id") or None
@@ -618,29 +464,13 @@ def camera_transfer(id):
         execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_service,new_service,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (id, old['contract_id'], new_contract, old['current_location'], new_loc, old['service'], new_service, old['status'], new_status, note, current_user()['name'], datetime.now().isoformat()))
         flash("Câmera transferida/atualizada.")
         return redirect(url_for("camera_view", id=id))
-    client_opts = "<option value=''>Sem cliente / estoque</option>" + "".join([f"<option value='{cl['id']}' {'selected' if selected_client_id==str(cl['id']) else ''}>{cl['name']}</option>" for cl in clients_rows])
-    opts = "<option value='' data-client=''>Sem contrato / estoque</option>" + "".join([f"<option value='{r['id']}' data-client='{r['client_id'] or ''}' {'selected' if c['contract_id']==r['id'] else ''}>{r['client_name'] or 'Sem cliente'} - {r['obra']}</option>" for r in contracts_rows])
+    opts = "<option value=''>Sem contrato / estoque</option>" + "".join([f"<option value='{r['id']}' {'selected' if c['contract_id']==r['id'] else ''}>{r['client_name']} - {r['obra']}</option>" for r in contracts_rows])
     services = "".join([f"<option {'selected' if c['service']==s else ''}>{s}</option>" for s in SERVICOS])
     statuses = "".join([f"<option {'selected' if c['status']==s else ''}>{s}</option>" for s in STATUS_CAMERA])
-    body = f"""<div class="panel"><h2>Transferir / Atualizar {c['code']}</h2><p class="tag">Selecione o cliente para filtrar somente as obras/contratos desse cliente.</p><form method="post" class="formgrid">
-    <label>Cliente<select id="client_select" name="client_select">{client_opts}</select></label><label>Novo contrato / obra<select id="contract_select" name="contract_id">{opts}</select></label>
-    <label>Novo local<input name="current_location" value="{c['current_location'] or ''}"></label><label>Novo serviço<select name="service">{services}</select></label>
-    <label>Novo status<select name="status">{statuses}</select></label><label class="full">Observação da movimentação<textarea name="note"></textarea></label><div class="full"><button class="primary">Salvar transferência</button></div></form></div>
-    <script>
-    function filtrarContratos(){{
-      const cliente = document.getElementById('client_select').value;
-      const contrato = document.getElementById('contract_select');
-      let selectedStillVisible = false;
-      Array.from(contrato.options).forEach(opt => {{
-        const show = !opt.value || !cliente || opt.dataset.client === cliente;
-        opt.hidden = !show;
-        if (opt.selected && show) selectedStillVisible = true;
-      }});
-      if (!selectedStillVisible) contrato.value = '';
-    }}
-    document.getElementById('client_select').addEventListener('change', filtrarContratos);
-    filtrarContratos();
-    </script>"""
+    body = f"""<div class="panel"><h2>Transferir / Atualizar {c['code']}</h2><form method="post" class="formgrid">
+    <label>Novo contrato<select name="contract_id">{opts}</select></label><label>Novo local<input name="current_location" value="{c['current_location'] or ''}"></label>
+    <label>Novo serviço<select name="service">{services}</select></label><label>Novo status<select name="status">{statuses}</select></label>
+    <label class="full">Observação da movimentação<textarea name="note"></textarea></label><div class="full"><button class="primary">Salvar transferência</button></div></form></div>"""
     return page(body, breadcrumb=f"Dashboard > Câmeras > Transferir {c['code']}")
 
 
@@ -780,24 +610,6 @@ def campo():
                 old_status, old_loc = camera["status"], camera["current_location"]
                 new_loc = request.form.get("local") or camera["current_location"]
                 note = request.form.get("note") or ""
-                install_photo_data = ""
-                # V1.9: foto opcional da instalação, enviada somente na etapa de ativação.
-                if action == "Em operação" and "install_photo" in request.files:
-                    f = request.files.get("install_photo")
-                    if f and f.filename:
-                        raw = f.read()
-                        if raw:
-                            # Reduz a foto antes de salvar no banco, mantendo o sistema leve para uso em campo.
-                            try:
-                                im = Image.open(BytesIO(raw)).convert("RGB")
-                                im.thumbnail((1200, 1200))
-                                out = BytesIO()
-                                im.save(out, format="JPEG", quality=72, optimize=True)
-                                raw = out.getvalue()
-                                mime = "image/jpeg"
-                            except Exception:
-                                mime = f.mimetype or "image/jpeg"
-                            install_photo_data = "data:%s;base64,%s" % (mime, base64.b64encode(raw).decode("ascii"))
                 if action == "Retirada":
                     # Retirada encerra o ciclo operacional: limpa contrato/local/serviço e exige novo teste antes de reutilizar.
                     reset_note = (note + " | " if note else "") + "Retirada confirmada. Dados operacionais limpos; câmera aguardando teste."
@@ -805,12 +617,8 @@ def campo():
                     execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], old_loc, "", old_status, "Retirada / Aguardando teste", reset_note, "Campo", datetime.now().isoformat()))
                     msg = "Câmera retirada. Dados operacionais limpos e câmera enviada para Aguardando teste."
                 else:
-                    if install_photo_data:
-                        execute("UPDATE cameras SET status=?, current_location=?, last_install_photo=?, updated_at=? WHERE id=?", (action, new_loc, install_photo_data, datetime.now().isoformat(), camera["id"]))
-                        execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at,install_photo) VALUES(?,?,?,?,?,?,?,?,?)", (camera["id"], old_loc, new_loc, old_status, action, note, "Campo", datetime.now().isoformat(), install_photo_data))
-                    else:
-                        execute("UPDATE cameras SET status=?, current_location=?, updated_at=? WHERE id=?", (action, new_loc, datetime.now().isoformat(), camera["id"]))
-                        execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], old_loc, new_loc, old_status, action, note, "Campo", datetime.now().isoformat()))
+                    execute("UPDATE cameras SET status=?, current_location=?, updated_at=? WHERE id=?", (action, new_loc, datetime.now().isoformat(), camera["id"]))
+                    execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], old_loc, new_loc, old_status, action, note, "Campo", datetime.now().isoformat()))
                     msg = f"Etapa registrada: {action_labels[action]}."
         camera = load_camera_by_code(code)
 
@@ -860,11 +668,11 @@ body{font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;color:#0f172a;mar
 {% if msg %}<div class="card"><b>{{msg}}</b></div>{% endif %}
 <div class="card"><button type="button" id="startQr">📷 Ler QR Code</button><div id="reader" class="reader" style="display:none"></div><form method="post" id="lookup"><label>Código da câmera<input id="code" name="code" placeholder="7S-CAM-001" value="{{request.form.get('code','') or request.args.get('code','')}}"></label><button>Buscar câmera</button></form><p class="tag">Se a câmera do celular não abrir, digite o código manualmente.</p></div>
 {% if camera %}<div class="card"><h2>{{camera['code']}}</h2><p><span class="badge">Status atual: {{camera['status']}}</span></p><p><b>Cliente:</b> {{camera['client_name'] or '-'}}</p><p><b>Obra:</b> {{camera['obra'] or '-'}}</p><p><b>Local:</b> {{camera['current_location'] or '-'}}</p><p><b>Serviço:</b> {{camera['service'] or '-'}}</p></div>
-<div class="card"><form method="post" enctype="multipart/form-data"><input type="hidden" name="code" value="{{camera['code']}}"><label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label>{% if next_step == 'Em operação' %}<label>📸 Foto da instalação (opcional)<input type="file" name="install_photo" accept="image/*" capture="environment"></label><p class="small">A foto não trava o fluxo. Se enviada, ficará anexada ao histórico da câmera.</p>{% endif %}<p class="tag"><b>Fluxo operacional</b></p><p class="small">Etapas concluídas ficam verdes e bloqueadas. Somente a próxima etapa fica liberada.</p>{% if camera['status'] == 'Aguardando teste' %}<p style="background:#fef3c7;border-radius:12px;padding:12px"><b>🧪 Aguardando teste:</b> esta câmera precisa ser testada e aprovada no painel antes de ser enviada para nova obra.</p>{% endif %}{{buttons_html|safe}}<hr style="border:0;border-top:1px solid #eef2f7;margin:18px 0"><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="PROBLEMA" class="danger">🔴 Registrar problema</button></form></div>
+<div class="card"><form method="post"><input type="hidden" name="code" value="{{camera['code']}}"><label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label><p class="tag"><b>Fluxo operacional</b></p><p class="small">Etapas concluídas ficam verdes e bloqueadas. Somente a próxima etapa fica liberada.</p>{% if camera['status'] == 'Aguardando teste' %}<p style="background:#fef3c7;border-radius:12px;padding:12px"><b>🧪 Aguardando teste:</b> esta câmera precisa ser testada e aprovada no painel antes de ser enviada para nova obra.</p>{% endif %}{{buttons_html|safe}}<hr style="border:0;border-top:1px solid #eef2f7;margin:18px 0"><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="PROBLEMA" class="danger">🔴 Registrar problema</button></form></div>
 <div class="card"><h3>Histórico recente</h3><div class="timeline">{% for h in history %}<div class="timeline-item"><b>{{h['new_status']}}</b><br><span class="small">{{h['created_at'][:16].replace('T',' ')}} · {{h['user_name'] or 'Campo'}}</span><br><span class="small">{{h['note'] or ''}}</span></div>{% else %}<p class="tag">Sem histórico ainda.</p>{% endfor %}</div></div>{% endif %}
 </div><script>let scanner=null;document.getElementById('startQr').addEventListener('click', async()=>{const r=document.getElementById('reader');r.style.display='block'; if(!window.Html5Qrcode){alert('Leitor QR não carregou. Digite o código manualmente.');return;} scanner=new Html5Qrcode('reader'); try{await scanner.start({facingMode:'environment'},{fps:10,qrbox:220}, txt=>{document.getElementById('code').value=txt.trim(); scanner.stop(); document.getElementById('lookup').submit();});}catch(e){alert('Não foi possível abrir a câmera. Verifique HTTPS/permissão ou digite o código manualmente.');}});</script>
 </body></html>
-""", camera=camera, msg=msg, buttons_html=buttons_html, history=history, next_step=next_step if camera else None)
+""", camera=camera, msg=msg, buttons_html=buttons_html, history=history)
 
 
 @app.route("/demo/load")
@@ -884,17 +692,16 @@ def load_demo():
     cam_num = 1
     for name, obra, city, st, qt, status in demo_contracts:
         execute("INSERT INTO clients(name,city,state,responsible,active,demo,created_at) VALUES(?,?,?,?,?,?,?)", (name, city, st, "Responsável teste", 1, 1, now))
-        cid = one("SELECT id FROM clients WHERE name=? AND city=? AND demo=1 AND created_at=? ORDER BY id DESC", (name, city, now))[0]
-        code_contract = contract_code()
-        execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (code_contract, cid, obra, city, st, date.today().isoformat(), (date.today()+timedelta(days=365)).isoformat(), qt, status, 1, now))
-        coid = one("SELECT id FROM contracts WHERE code=? ORDER BY id DESC", (code_contract,))[0]
+        cid = one("SELECT last_insert_rowid()")[0]
+        execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (contract_code(), cid, obra, city, st, date.today().isoformat(), (date.today()+timedelta(days=365)).isoformat(), qt, status, 1, now))
+        coid = one("SELECT last_insert_rowid()")[0]
         for i in range(qt):
             code = f"7S-CAM-{cam_num:03d}"
             cstatus = "Em operação"
             if cam_num in (6,): cstatus = "Offline"
             if cam_num in (10,): cstatus = "Em transporte"
             execute("INSERT INTO cameras(code,contract_id,current_location,service,status,demo,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?)", (code, coid, loc_cycle[i % len(loc_cycle)], service_cycle[i % len(service_cycle)], cstatus, 1, now, now))
-            cam_id = one("SELECT id FROM cameras WHERE code=?", (code,))[0]
+            cam_id = one("SELECT last_insert_rowid()")[0]
             if cstatus == "Offline":
                 execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,demo,created_at) VALUES(?,?,?,?,?,?,?)", (cam_id,"Sem comunicação","Câmera offline para demonstração","Aberta","João",1,now))
             cam_num += 1

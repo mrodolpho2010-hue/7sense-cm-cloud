@@ -1,50 +1,34 @@
-# 7Sense – Data into Action | Contract Manager v1.9
+# 7Sense CM Cloud v1.5 Campo
 
-## O que entrou nesta versão
+Versão com fluxo operacional sequencial no módulo `/campo`.
 
-### 1. Foto da instalação no 7Sense Campo
-- Após a etapa **🟢 Ativar câmera**, aparece o campo **📸 Foto da instalação (opcional)**.
-- A foto é anexada ao histórico da câmera.
-- A foto também aparece na ficha da câmera no painel do computador.
-- O fluxo continua simples: a foto é opcional e não bloqueia a ativação.
+## Novidades
 
-### 2. Câmeras organizadas por hierarquia
-Na aba **Câmeras**, a visualização agora fica assim:
+- Etapas do campo em ordem obrigatória:
+  1. Em transporte
+  2. Chegou na obra
+  3. Instalando
+  4. Ativar câmera
+  5. Retirada
+- Etapas concluídas ficam verdes e desabilitadas.
+- Somente a próxima etapa fica liberada.
+- Registrar problema fica sempre disponível.
+- Histórico recente da câmera exibido no celular.
 
-Status/filtro selecionado → Cliente → Obra/Contrato → Câmeras
+## Deploy no Render
 
-Exemplo:
+Depois de substituir os arquivos no repositório:
 
-- Toyota
-  - Sorocaba/SP
-    - 7S-CAM-001
-    - 7S-CAM-002
-- Equinix
-  - Tamboré/SP
-    - 7S-CAM-010
+1. Commit: `Fluxo sequencial do campo v1.5`
+2. Push origin
+3. O Render atualiza automaticamente.
 
-Isso facilita saber primeiro de qual cliente e obra são as câmeras.
+## Links
 
-### 3. Banco permanente mantido
-- Continua usando `DATABASE_URL` no Render para conectar ao Supabase/PostgreSQL.
-- Se `DATABASE_URL` não existir, roda localmente com SQLite.
+- Admin: `/login`
+- Campo: `/campo`
 
-## Como atualizar no Render
 
-1. Extraia este ZIP.
-2. Copie os arquivos de dentro da pasta `7sense-cm-cloud-v1_9`.
-3. Cole na pasta do GitHub `7sense-cm-cloud`, substituindo os arquivos.
-4. No GitHub Desktop:
-   - Summary: `v1.9 foto instalacao e cameras por cliente obra`
-   - Commit to main
-   - Push origin
-5. Aguarde o Render atualizar automaticamente.
-
-## Teste recomendado
-
-1. No celular, acesse `/campo`.
-2. Leia uma câmera que esteja na etapa **Instalando**.
-3. Clique em **Ativar câmera**.
-4. Tire ou escolha uma foto da instalação.
-5. Salve.
-6. No painel do computador, abra a ficha da câmera e confira se a foto apareceu no histórico.
+## v1.5.1
+- Corrige fluxo de campo para reiniciar quando câmera estiver com status Em estoque.
+- Evita que histórico antigo deixe botões verdes em novos testes ou novas implantações.
