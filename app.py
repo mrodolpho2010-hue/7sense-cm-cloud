@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "1.9.1 PostgreSQL corrigido + visão hierárquica"
+APP_VERSION = "1.9.2 Supabase ativo + foto instalação + visão hierárquica"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -138,13 +138,13 @@ def init_db():
         execute("ALTER TABLE cameras ADD COLUMN last_install_photo TEXT")
     except Exception:
         pass
+    execute("""CREATE TABLE IF NOT EXISTS camera_history(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id INTEGER, old_contract_id INTEGER, new_contract_id INTEGER, old_location TEXT, new_location TEXT, old_service TEXT, new_service TEXT, old_status TEXT, new_status TEXT, note TEXT, user_name TEXT, created_at TEXT, install_photo TEXT
+    )""")
     try:
         execute("ALTER TABLE camera_history ADD COLUMN install_photo TEXT")
     except Exception:
         pass
-    execute("""CREATE TABLE IF NOT EXISTS camera_history(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id INTEGER, old_contract_id INTEGER, new_contract_id INTEGER, old_location TEXT, new_location TEXT, old_service TEXT, new_service TEXT, old_status TEXT, new_status TEXT, note TEXT, user_name TEXT, created_at TEXT
-    )""")
     execute("""CREATE TABLE IF NOT EXISTS occurrences(
         id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id INTEGER, title TEXT, problem TEXT, status TEXT, responsible TEXT, notes TEXT, demo INTEGER DEFAULT 0, created_at TEXT, closed_at TEXT
     )""")
