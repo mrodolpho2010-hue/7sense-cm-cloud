@@ -1,34 +1,46 @@
-# 7Sense CM Cloud v1.5 Campo
+# 7Sense – Data into Action | Contract Manager v1.8
 
-Versão com fluxo operacional sequencial no módulo `/campo`.
+Versão com suporte a banco permanente PostgreSQL/Supabase.
 
-## Novidades
+## O que mudou
 
-- Etapas do campo em ordem obrigatória:
-  1. Em transporte
-  2. Chegou na obra
-  3. Instalando
-  4. Ativar câmera
-  5. Retirada
-- Etapas concluídas ficam verdes e desabilitadas.
-- Somente a próxima etapa fica liberada.
-- Registrar problema fica sempre disponível.
-- Histórico recente da câmera exibido no celular.
+- Se existir a variável `DATABASE_URL`, o sistema usa PostgreSQL/Supabase.
+- Se `DATABASE_URL` não existir, continua usando SQLite local.
+- Mantém o fluxo de campo, QR Code, histórico, clientes, contratos e câmeras.
 
-## Deploy no Render
+## Render
 
-Depois de substituir os arquivos no repositório:
+Configure em Environment:
 
-1. Commit: `Fluxo sequencial do campo v1.5`
-2. Push origin
-3. O Render atualiza automaticamente.
+```text
+DATABASE_URL=postgresql://postgres:SUA_SENHA@db.kegkupvivmjxedvmvvwx.supabase.co:5432/postgres
+```
 
-## Links
+O sistema adiciona `sslmode=require` automaticamente quando necessário.
 
-- Admin: `/login`
-- Campo: `/campo`
+## Login inicial
 
+Operação:
 
-## v1.5.1
-- Corrige fluxo de campo para reiniciar quando câmera estiver com status Em estoque.
-- Evita que histórico antigo deixe botões verdes em novos testes ou novas implantações.
+```text
+marcos@7sense.local
+123456
+```
+
+Diretoria:
+
+```text
+diretoria@7sense.local
+123456
+```
+
+## Teste recomendado
+
+1. Faça commit e push desta versão.
+2. Aguarde o deploy no Render.
+3. Abra `/login`.
+4. Cadastre uma câmera nova, por exemplo `7S-CAM-300`.
+5. Leia o QR ou digite o código em `/campo`.
+6. Altere o status.
+7. Aguarde o Render reiniciar ou feche tudo.
+8. Abra novamente e confirme que a câmera continua cadastrada.
