@@ -1,15 +1,12 @@
-# 7Sense CM Cloud v2.0.4
+# 7Sense CM Cloud v2.0.5
 
-Ajuste de estoque e disponibilidade operacional.
+Fluxo operacional único por câmera.
 
-## Alterações
-- Remove o filtro "Disponíveis" da tela de câmeras.
-- "Testada e aprovada" passa a representar as câmeras disponíveis para novo contrato.
-- "Em estoque" passa a representar o estoque físico total, incluindo:
-  - Aguardando teste
-  - Testada e aprovada
-  - Em estoque
-- Nova câmera cadastrada entra em estoque e aguardando teste.
-- Câmera recebida na central volta para estoque e aguardando teste.
-- Ao aprovar checklist, a câmera permanece em estoque e passa para Testada e aprovada.
-- Dashboard mantém "Câmeras disponíveis", contando somente as testadas e aprovadas.
+## Ajustes
+- Cada câmera agora fica em apenas um estado operacional por vez.
+- A soma dos filtros de status fecha com o total de câmeras.
+- Remove filtro agregado "Em estoque" da tela de câmeras.
+- "Aguardando teste" e "Testada e aprovada" representam as câmeras fisicamente na central.
+- Adiciona/normaliza o status "Na obra aguardando instalação".
+- Normaliza status antigo "Chegou na obra" para "Na obra aguardando instalação".
+- Mantém fluxo de retirada: Aguardando retirada → Em retorno → Recebida na central → Aguardando teste.

@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "2.0.4 Estoque e aprovação operacional"
+APP_VERSION = "2.0.5 Fluxo operacional único"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -33,7 +33,7 @@ app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # limite de upload para foto
 
 SERVICOS = ["IA Segurança", "Timelapse", "IA BIM", "Acompanhamento de Valas", "Controle de Pessoas", "Monitoramento de Equipamentos", "Outro"]
 STATUS_CONTRATO = ["Planejamento", "Implantação", "Operação", "Manutenção", "Encerrado"]
-STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Em estoque", "Reservada", "Em transporte", "Chegou na obra", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Aposentada", "Descartada"]
+STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Aposentada", "Descartada"]
 STATUS_ATENCAO = ["Offline", "Em manutenção"]
 
 
@@ -176,16 +176,21 @@ def init_db():
         execute("INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)", ("Marcos", "marcos@7sense.local", generate_password_hash("123456"), "operacao"))
     if not one("SELECT id FROM users WHERE email=?", ("diretoria@7sense.local",)):
         execute("INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)", ("Diretoria", "diretoria@7sense.local", generate_password_hash("123456"), "diretoria"))
-    # V2.0.4: normaliza o conceito de estoque.
-    # "Disponível" deixou de ser um status próprio; agora é representado por "Testada e aprovada".
-    try:
-        execute("UPDATE cameras SET status='Testada e aprovada' WHERE status='Disponível'")
-    except Exception:
-        pass
-    try:
-        execute("UPDATE cameras SET patrimonial_status='Em estoque' WHERE status IN ('Aguardando teste','Testada e aprovada','Em estoque') AND (patrimonial_status IS NULL OR patrimonial_status='')")
-    except Exception:
-        pass
+    # V2.0.5: cada câmera deve estar em um único estado operacional.
+    # O estoque físico passa a ser representado por dois estados únicos:
+    # "Aguardando teste" e "Testada e aprovada". Assim a soma dos filtros fecha com o total.
+    for sql in [
+        "UPDATE cameras SET status='Testada e aprovada' WHERE status='Disponível'",
+        "UPDATE cameras SET status='Aguardando teste' WHERE status='Em estoque'",
+        "UPDATE cameras SET status='Na obra aguardando instalação' WHERE status='Chegou na obra'",
+        "UPDATE camera_history SET new_status='Na obra aguardando instalação' WHERE new_status='Chegou na obra'",
+        "UPDATE camera_history SET old_status='Na obra aguardando instalação' WHERE old_status='Chegou na obra'",
+        "UPDATE cameras SET patrimonial_status='Em estoque' WHERE status IN ('Aguardando teste','Testada e aprovada') AND (patrimonial_status IS NULL OR patrimonial_status='')"
+    ]:
+        try:
+            execute(sql)
+        except Exception:
+            pass
 
 
 def current_user():
@@ -256,7 +261,7 @@ def status_class(s):
         return "danger"
     if s in ("Em implantação", "Instalando", "Chegou na obra"):
         return "warn"
-    if s in ("Em transporte", "Aguardando retirada", "Reservada", "Em retorno"):
+    if s in ("Em transporte", "Aguardando retirada", "Reservada", "Em retorno", "Na obra aguardando instalação", "Instalando"):
         return "info"
     if s in ("Aguardando teste", "Em estoque", "Disponível", "Aposentada", "Descartada"):
         return "muted"
@@ -614,10 +619,7 @@ def cameras():
     status = request.args.get("status", "Todas")
     params = (current_demo_flag(),)
     where = "WHERE ca.demo=?"
-    if status == "Em estoque":
-        # Estoque físico: câmeras na central, incluindo as que aguardam teste e as já aprovadas.
-        where += " AND (ca.status IN ('Aguardando teste','Testada e aprovada','Em estoque') OR ca.patrimonial_status='Em estoque')"
-    elif status != "Todas":
+    if status != "Todas":
         where += " AND ca.status=?"; params = (current_demo_flag(), status)
     rows = query(f"""SELECT ca.*, co.obra, co.city contract_city, co.state contract_state, cl.name client_name
                     FROM cameras ca
@@ -625,12 +627,10 @@ def cameras():
                     LEFT JOIN clients cl ON cl.id=co.client_id
                     {where}
                     ORDER BY cl.name, co.obra, ca.code""", params)
-    filters = ["Todas", "Em operação", "Em estoque", "Em transporte", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Testada e aprovada", "Aguardando teste"]
+    filters = ["Todas", "Aguardando teste", "Testada e aprovada", "Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção"]
     def filter_count(label):
         if label == "Todas":
             return count("SELECT COUNT(*) FROM cameras WHERE demo=?", (current_demo_flag(),))
-        if label == "Em estoque":
-            return count("SELECT COUNT(*) FROM cameras WHERE (status IN ('Aguardando teste','Testada e aprovada','Em estoque') OR patrimonial_status='Em estoque') AND demo=?", (current_demo_flag(),))
         return count("SELECT COUNT(*) FROM cameras WHERE status=? AND demo=?", (label, current_demo_flag()))
     fhtml = "".join([f"<a class='{ 'active' if status==s else ''}' href='{url_for('cameras', status=s)}'>{s} ({filter_count(s)})</a>" for s in filters])
 
@@ -662,7 +662,7 @@ def cameras():
     items = "".join(blocks)
 
     body = f"""<div class='panel'><div class='actions'><h2 style='flex:1'>Câmeras</h2>{'<a class=\"btn primary\" href=\"'+url_for('camera_new')+'\">Nova câmera</a>' if current_user()['role']=='operacao' else ''}</div>
-    <p class='tag'>Visualização por <b>cliente</b>, depois <b>obra</b>, depois <b>câmera</b>. <b>Em estoque</b> inclui câmeras aguardando teste e testadas/aprovadas.</p>
+    <p class='tag'>Visualização por <b>cliente</b>, depois <b>obra</b>, depois <b>câmera</b>. cada câmera aparece em <b>uma única etapa</b>. A soma dos filtros fecha com o total.</p>
     <div class='filters'>{fhtml}</div>{items or '<p>Nenhuma câmera.</p>'}</div>"""
     return page(body, breadcrumb="Dashboard > Câmeras")
 
@@ -687,7 +687,7 @@ def camera_form(r=None, contract_id=None):
         selected_client_id = str(cr["client_id"]) if cr and cr["client_id"] else ""
     if request.method == "POST":
         status_form = request.form.get("status") or "Aguardando teste"
-        patrimonial_status = "Em estoque" if status_form in ("Aguardando teste", "Testada e aprovada", "Em estoque") else status_form
+        patrimonial_status = "Em estoque" if status_form in ("Aguardando teste", "Testada e aprovada") else status_form
         vals = (request.form.get("model"), request.form.get("serial"), request.form.get("contract_id") or None, request.form.get("current_location"), request.form.get("service"), status_form, request.form.get("notes"), datetime.now().isoformat(), patrimonial_status)
         if r:
             execute("UPDATE cameras SET model=?,serial=?,contract_id=?,current_location=?,service=?,status=?,notes=?,updated_at=?,patrimonial_status=? WHERE id=?", vals+(r["id"],))
@@ -1012,10 +1012,10 @@ def campo():
 
     if request.method == "POST" and camera:
         action = request.form.get("action")
-        workflow = ["Em transporte", "Chegou na obra", "Instalando", "Em operação", "Retirada"]
+        workflow = ["Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Retirada"]
         action_labels = {
             "Em transporte": "🚚 Em transporte",
-            "Chegou na obra": "📍 Chegou na obra",
+            "Na obra aguardando instalação": "📍 Na obra / aguardando instalação",
             "Instalando": "🛠 Instalando",
             "Em operação": "🟢 Ativar câmera",
             "Retirada": "↩️ Retirada",
@@ -1026,7 +1026,7 @@ def campo():
         max_done = -1
         # Regra v1.5.1: se a câmera estiver em estoque, o fluxo de campo reinicia.
         # Isso permite reutilizar uma câmera ou testar um QR sem herdar etapas antigas.
-        if camera["status"] in ("Em estoque", "Testada e aprovada"):
+        if camera["status"] in ("Testada e aprovada",):
             max_done = -1
         elif camera["status"] == "Aguardando teste":
             max_done = -2
@@ -1098,10 +1098,10 @@ def campo():
         camera = load_camera_by_code(code)
 
     if camera:
-        workflow = ["Em transporte", "Chegou na obra", "Instalando", "Em operação", "Retirada"]
+        workflow = ["Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Retirada"]
         action_labels = {
             "Em transporte": "🚚 Em transporte",
-            "Chegou na obra": "📍 Chegou na obra",
+            "Na obra aguardando instalação": "📍 Na obra / aguardando instalação",
             "Instalando": "🛠 Instalando",
             "Em operação": "🟢 Ativar câmera",
             "Retirada": "↩️ Retirada",
@@ -1110,7 +1110,7 @@ def campo():
         max_done = -1
         # Regra v1.5.1: se a câmera estiver em estoque, o fluxo de campo reinicia.
         # Isso permite reutilizar uma câmera ou testar um QR sem herdar etapas antigas.
-        if camera["status"] in ("Em estoque", "Testada e aprovada"):
+        if camera["status"] in ("Testada e aprovada",):
             max_done = -1
         elif camera["status"] == "Aguardando teste":
             max_done = -2
