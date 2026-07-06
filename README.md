@@ -1,12 +1,9 @@
-# 7Sense CM Cloud v2.0.5
+# 7Sense CM Cloud v2.0.6
 
-Fluxo operacional único por câmera.
-
-## Ajustes
-- Cada câmera agora fica em apenas um estado operacional por vez.
-- A soma dos filtros de status fecha com o total de câmeras.
-- Remove filtro agregado "Em estoque" da tela de câmeras.
-- "Aguardando teste" e "Testada e aprovada" representam as câmeras fisicamente na central.
-- Adiciona/normaliza o status "Na obra aguardando instalação".
-- Normaliza status antigo "Chegou na obra" para "Na obra aguardando instalação".
-- Mantém fluxo de retirada: Aguardando retirada → Em retorno → Recebida na central → Aguardando teste.
+Alterações:
+- Dashboard com fluxo operacional completo das câmeras.
+- Remoção da Pesquisa Global do Dashboard.
+- Indicadores de: contratos ativos, câmeras em operação, prontas para envio, ocorrências e agenda.
+- Bloco de fluxo operacional com contadores por etapa.
+- Últimas movimentações no Dashboard.
+- Mantém banco permanente Supabase/PostgreSQL.

@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "2.0.5 Fluxo operacional único"
+APP_VERSION = "2.0.6 Dashboard operacional"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -470,19 +470,68 @@ def dashboard():
     df = 0
     contracts_active = count("SELECT COUNT(*) FROM contracts WHERE status!='Encerrado' AND demo=?", (df,))
     cams_operation = count("SELECT COUNT(*) FROM cameras WHERE status='Em operação' AND demo=?", (df,))
-    cams_available = count("SELECT COUNT(*) FROM cameras WHERE status='Testada e aprovada' AND demo=?", (df,))
+    cams_ready = count("SELECT COUNT(*) FROM cameras WHERE status='Testada e aprovada' AND demo=?", (df,))
+    cams_total = count("SELECT COUNT(*) FROM cameras WHERE demo=?", (df,))
     occ_open = count("SELECT COUNT(*) FROM occurrences WHERE status IN ('Aberta','Em andamento') AND archived_at IS NULL AND demo=?", (df,))
     today = date.today().isoformat()
     agenda_today = count("SELECT COUNT(*) FROM agenda WHERE event_date=? AND demo=?", (today, df))
+
+    flow_items = [
+        ("Aguardando teste", "🧪", "Aguardando teste"),
+        ("Prontas para envio", "✅", "Testada e aprovada"),
+        ("Em transporte", "🚚", "Em transporte"),
+        ("Na obra aguardando instalação", "📍", "Na obra aguardando instalação"),
+        ("Em operação", "🟢", "Em operação"),
+        ("Aguardando retirada", "🟡", "Aguardando retirada"),
+        ("Em retorno", "↩️", "Em retorno"),
+        ("Em manutenção", "🔧", "Em manutenção"),
+        ("Offline", "🔴", "Offline"),
+    ]
+    flow_cards = ""
+    for label, icon, status_value in flow_items:
+        n = count("SELECT COUNT(*) FROM cameras WHERE status=? AND demo=?", (status_value, df))
+        danger = " danger" if status_value in ("Offline", "Em manutenção") and n else ""
+        flow_cards += f"<a class='card metric{danger}' href='{url_for('cameras', status=status_value)}'><h3>{icon} {label}</h3><b>{n}</b></a>"
+
+    hist = query("""SELECT h.*, c.code camera_code, cl.name client_name, co.obra obra
+                    FROM camera_history h
+                    LEFT JOIN cameras c ON c.id=h.camera_id
+                    LEFT JOIN contracts co ON co.id=COALESCE(h.new_contract_id, c.contract_id)
+                    LEFT JOIN clients cl ON cl.id=co.client_id
+                    ORDER BY h.created_at DESC LIMIT 8""")
+    moves = ""
+    for h in hist:
+        when = (rv(h, 'created_at') or '')[:16].replace('T', ' ')
+        cam = rv(h, 'camera_code', 'Câmera') or 'Câmera'
+        st = rv(h, 'new_status', '') or ''
+        obra = rv(h, 'obra', '') or ''
+        cliente = rv(h, 'client_name', '') or ''
+        note = rv(h, 'note', '') or ''
+        context = f" · {cliente} / {obra}" if (cliente or obra) else ""
+        moves += f"<div class='row'><b>{when}</b><span>{cam}</span><span>{st}{context}</span><span>{note}</span><span></span></div>"
+    if not moves:
+        moves = "<p class='tag'>Nenhuma movimentação registrada ainda.</p>"
+
     body = f"""
     <div class="grid">
       <a class="card metric" href="{url_for('contracts')}"><h3>Contratos ativos</h3><b>{contracts_active}</b></a>
       <a class="card metric" href="{url_for('cameras', status='Em operação')}"><h3>Câmeras em operação</h3><b>{cams_operation}</b></a>
-      <a class="card metric" href="{url_for('cameras', status='Testada e aprovada')}"><h3>Câmeras disponíveis</h3><b>{cams_available}</b></a>
+      <a class="card metric" href="{url_for('cameras', status='Testada e aprovada')}"><h3>Prontas para envio</h3><b>{cams_ready}</b></a>
       <a class="card metric {'danger' if occ_open else ''}" href="{url_for('occurrences', status='abertas')}"><h3>Ocorrências em aberto</h3><b>{occ_open}</b></a>
       <a class="card metric" href="{url_for('agenda_page', filtro='hoje')}"><h3>Agenda do dia</h3><b>{agenda_today}</b></a>
     </div>
-    <div class="panel"><h2>Pesquisa global</h2><form action="{url_for('search')}" class="search"><input name="q" placeholder="Toyota, CAM-007, Sorocaba..."><button>Pesquisar</button></form></div>
+
+    <div class="panel">
+      <h2>Fluxo operacional das câmeras</h2>
+      <p class="tag">Total cadastrado: <b>{cams_total}</b>. Cada câmera aparece em apenas uma etapa do fluxo.</p>
+      <div class="grid">{flow_cards}</div>
+    </div>
+
+    <div class="panel">
+      <h2>Últimas movimentações</h2>
+      {moves}
+    </div>
+
     <div class="panel"><h2>Gestão operacional</h2><p class="tag">Este painel controla patrimônio, contratos, obras, movimentações e ocorrências. Status técnicos em tempo real, como bateria ou sinal, pertencem à plataforma de monitoramento/IA.</p></div>
     """
     return page(body)
