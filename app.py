@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "2.0 Release Comercial"
+APP_VERSION = "2.0.3 Fluxo de retorno e foto obrigatória"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -33,7 +33,7 @@ app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # limite de upload para foto
 
 SERVICOS = ["IA Segurança", "Timelapse", "IA BIM", "Acompanhamento de Valas", "Controle de Pessoas", "Monitoramento de Equipamentos", "Outro"]
 STATUS_CONTRATO = ["Planejamento", "Implantação", "Operação", "Manutenção", "Encerrado"]
-STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Disponível", "Em estoque", "Reservada", "Em transporte", "Chegou na obra", "Instalando", "Em operação", "Aguardando retirada", "Offline", "Em manutenção", "Retirada", "Aposentada", "Descartada"]
+STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Disponível", "Em estoque", "Reservada", "Em transporte", "Chegou na obra", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Aposentada", "Descartada"]
 STATUS_ATENCAO = ["Offline", "Em manutenção"]
 
 
@@ -246,9 +246,9 @@ def status_class(s):
         return "danger"
     if s in ("Em implantação", "Instalando", "Chegou na obra"):
         return "warn"
-    if s in ("Em transporte", "Aguardando retirada", "Reservada"):
+    if s in ("Em transporte", "Aguardando retirada", "Reservada", "Em retorno"):
         return "info"
-    if s in ("Aguardando teste", "Em estoque", "Disponível", "Retirada", "Aposentada", "Descartada"):
+    if s in ("Aguardando teste", "Em estoque", "Disponível", "Aposentada", "Descartada"):
         return "muted"
     return "ok"
 
@@ -614,8 +614,14 @@ def cameras():
                     LEFT JOIN clients cl ON cl.id=co.client_id
                     {where}
                     ORDER BY cl.name, co.obra, ca.code""", params)
-    filters = ["Todas", "Em operação", "Disponíveis", "Em estoque", "Em transporte", "Aguardando retirada", "Offline", "Em manutenção", "Retirada", "Testada e aprovada", "Aguardando teste"]
-    fhtml = "".join([f"<a class='{ 'active' if status==s else ''}' href='{url_for('cameras', status=s)}'>{s}</a>" for s in filters])
+    filters = ["Todas", "Em operação", "Disponíveis", "Em estoque", "Em transporte", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Testada e aprovada", "Aguardando teste"]
+    def filter_count(label):
+        if label == "Todas":
+            return count("SELECT COUNT(*) FROM cameras WHERE demo=?", (current_demo_flag(),))
+        if label == "Disponíveis":
+            return count("SELECT COUNT(*) FROM cameras WHERE status IN ('Disponível','Em estoque','Testada e aprovada') AND demo=?", (current_demo_flag(),))
+        return count("SELECT COUNT(*) FROM cameras WHERE status=? AND demo=?", (label, current_demo_flag()))
+    fhtml = "".join([f"<a class='{ 'active' if status==s else ''}' href='{url_for('cameras', status=s)}'>{s} ({filter_count(s)})</a>" for s in filters])
 
     # V1.9: visão hierárquica para operação real: Status > Cliente > Obra > Câmeras.
     # Mesmo em filtros específicos, primeiro aparece o cliente, depois a obra/contrato.
@@ -725,7 +731,7 @@ def camera_view(id):
     hist_html = "".join(hist_parts)
     occ_html = "".join([f"<div class='row'><b>{o['title']}</b><span>{o['problem']}</span><span>{o['status']}</span><span>{o['created_at'][:16]}</span><span></span></div>" for o in occs])
     occ_hist_html = "".join([f"<div class='row'><b>{o['title']}</b><span>{o['problem']}</span><span>Arquivada</span><span>{(o['archived_at'] or o['created_at'])[:16]}</span><span>{o['archived_location'] or '-'}</span></div>" for o in occs_hist])
-    body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p>{f"<p><b>Última foto da instalação:</b><br><img src='{rv(c, 'last_install_photo', '')}' alt='Foto da instalação' style='max-width:320px;border-radius:14px;border:1px solid #dbe3ef;margin-top:8px'></p>" if rv(c, 'last_install_photo', '') else ''}<div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a><a class="btn" href="{url_for('camera_qr', id=c['id'])}">📷 Gerar QR</a>{('<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a><a class=\"btn\" href=\"'+url_for('camera_authorize_removal', id=c['id'])+'\">🔓 Autorizar retirada</a>') if current_user()['role']=='operacao' else ''}</div></div>
+    body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p>{f"<p><b>Última foto da instalação:</b><br><img src='{rv(c, 'last_install_photo', '')}' alt='Foto da instalação' style='max-width:320px;border-radius:14px;border:1px solid #dbe3ef;margin-top:8px'></p>" if rv(c, 'last_install_photo', '') else ''}<div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a><a class="btn" href="{url_for('camera_qr', id=c['id'])}">📷 Gerar QR</a>{('<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a>' + ('<a class=\"btn\" href=\"'+url_for('camera_receive_central', id=c['id'])+'\">🏢 Recebida na central</a>' if c['status']=='Em retorno' else '<a class=\"btn\" href=\"'+url_for('camera_authorize_removal', id=c['id'])+'\">🔓 Autorizar retirada</a>')) if current_user()['role']=='operacao' else ''}</div></div>
     <div class="panel"><h2>Histórico</h2>{hist_html or '<p>Sem histórico.</p>'}</div>
     <div class="panel"><h2>Ocorrências do ciclo atual</h2>{occ_html or '<p>Sem ocorrências ativas neste ciclo.</p>'}</div>
     <div class="panel"><h2>Ocorrências arquivadas de ciclos anteriores</h2>{occ_hist_html or '<p>Sem ocorrências arquivadas.</p>'}</div>"""
@@ -753,7 +759,35 @@ def camera_authorize_removal(id):
     <form method='post' onsubmit="return confirm('Confirmar autorização de retirada desta câmera?')"><button class='primary'>Autorizar retirada</button> <a class='btn' href='{url_for('camera_view', id=id)}'>Cancelar</a></form></div>"""
     return page(body, breadcrumb=f"Dashboard > Câmeras > Autorizar retirada {c['code']}")
 
-def build_qr_label(code):
+
+@app.route("/cameras/<int:id>/receive-central", methods=["GET", "POST"])
+@operacao_required
+def camera_receive_central(id):
+    c = one("""SELECT ca.*, co.obra, cl.name client_name FROM cameras ca
+               LEFT JOIN contracts co ON co.id=ca.contract_id
+               LEFT JOIN clients cl ON cl.id=co.client_id
+               WHERE ca.id=?""", (id,))
+    if not c:
+        flash("Câmera não encontrada.")
+        return redirect(url_for("cameras"))
+    if request.method == "POST":
+        old_status = c["status"]
+        old_loc = c["current_location"]
+        now = datetime.now().isoformat()
+        active_occ_count = count("SELECT COUNT(*) FROM occurrences WHERE camera_id=? AND archived_at IS NULL", (id,))
+        execute("UPDATE occurrences SET archived_at=?, archived_contract_id=?, archived_location=? WHERE camera_id=? AND archived_at IS NULL", (now, c["contract_id"], old_loc, id))
+        note = f"Câmera recebida na central. Dados operacionais limpos; {active_occ_count} ocorrência(s) arquivada(s) no histórico da obra; câmera aguardando teste."
+        execute("UPDATE cameras SET status=?, contract_id=NULL, current_location='', service='', removal_authorized_at=NULL, removal_authorized_by=NULL, patrimonial_status=?, updated_at=? WHERE id=?", ("Aguardando teste", "Em preparação", now, id))
+        execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (id, c["contract_id"], None, old_loc, "", old_status, "Recebida na central / Aguardando teste", note, current_user()["name"], now))
+        flash("Câmera recebida na central. Ela agora está aguardando teste.")
+        return redirect(url_for("camera_view", id=id))
+    body = f"""<div class='panel'><h2>🏢 Recebida na central</h2>
+    <p>Confirme somente quando a câmera realmente chegou ao escritório/central.</p>
+    <div class='card'><p><b>Câmera:</b> {c['code']}</p><p><b>Cliente:</b> {c['client_name'] or '-'}</p><p><b>Obra:</b> {c['obra'] or '-'}</p><p><b>Status atual:</b> {c['status']}</p></div>
+    <form method='post' onsubmit="return confirm('Confirmar recebimento na central? A câmera ficará aguardando teste e o ciclo anterior será arquivado.')"><button class='primary'>Confirmar recebimento</button> <a class='btn' href='{url_for('camera_view', id=id)}'>Cancelar</a></form></div>"""
+    return page(body, breadcrumb=f"Dashboard > Câmeras > Recebida na central {c['code']}")
+
+def build_qr_label(code, cliente="", obra=""):
     qr = qrcode.QRCode(version=2, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=14, border=4)
     qr.add_data(code)
     qr.make(fit=True)
@@ -772,18 +806,23 @@ def build_qr_label(code):
     label.paste(qr_img, (125, 185))
     draw.rounded_rectangle((210, 875, 690, 955), radius=18, fill=(20,70,140))
     draw.text((450, 915), code, anchor="mm", font=font_code, fill="white")
-    draw.text((450, 1000), "Patrimônio 7Sense", anchor="mm", font=font_sub, fill=(70, 70, 70))
+    
+    if cliente or obra:
+        draw.text((450, 985), (cliente or "Cliente não definido")[:34], anchor="mm", font=font_sub, fill=(30, 30, 30))
+        draw.text((450, 1032), (obra or "Obra não definida")[:38], anchor="mm", font=font_sub, fill=(70, 70, 70))
+    else:
+        draw.text((450, 1000), "Patrimônio 7Sense", anchor="mm", font=font_sub, fill=(70, 70, 70))
     return label
 
 
 @app.route("/cameras/<int:id>/qr")
 @login_required
 def camera_qr(id):
-    c = one("SELECT * FROM cameras WHERE id=?", (id,))
+    c = one("""SELECT ca.*, co.obra, cl.name client_name FROM cameras ca LEFT JOIN contracts co ON co.id=ca.contract_id LEFT JOIN clients cl ON cl.id=co.client_id WHERE ca.id=?""", (id,))
     if not c:
         flash("Câmera não encontrada.")
         return redirect(url_for("cameras"))
-    img = build_qr_label(c["code"])
+    img = build_qr_label(c["code"], rv(c, "client_name", ""), rv(c, "obra", ""))
     bio = BytesIO()
     img.save(bio, "PNG")
     bio.seek(0)
@@ -1024,17 +1063,17 @@ def campo():
                             except Exception:
                                 mime = f.mimetype or "image/jpeg"
                             install_photo_data = "data:%s;base64,%s" % (mime, base64.b64encode(raw).decode("ascii"))
-                if action == "Retirada":
-                    # Retirada encerra o ciclo operacional: limpa contrato/local/serviço e exige novo teste antes de reutilizar.
-                    # As ocorrências do ciclo atual são arquivadas no contrato/obra onde a câmera estava instalada,
-                    # para não aparecerem no próximo uso da câmera, mas permanecerem consultáveis no histórico.
-                    archived_at = datetime.now().isoformat()
-                    active_occ_count = count("SELECT COUNT(*) FROM occurrences WHERE camera_id=? AND archived_at IS NULL", (camera["id"],))
-                    execute("UPDATE occurrences SET archived_at=?, archived_contract_id=?, archived_location=? WHERE camera_id=? AND archived_at IS NULL", (archived_at, camera["contract_id"], old_loc, camera["id"]))
-                    reset_note = (note + " | " if note else "") + f"Retirada confirmada. Dados operacionais limpos; {active_occ_count} ocorrência(s) arquivada(s) no histórico da obra; câmera aguardando teste."
-                    execute("UPDATE cameras SET status=?, contract_id=NULL, current_location='', service='', removal_authorized_at=NULL, removal_authorized_by=NULL, patrimonial_status=?, updated_at=? WHERE id=?", ("Aguardando teste", "Em preparação", datetime.now().isoformat(), camera["id"]))
-                    execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (camera["id"], camera["contract_id"], None, old_loc, "", old_status, "Retirada / Aguardando teste", reset_note, "Campo", archived_at))
-                    msg = "Câmera retirada. Dados operacionais e ocorrências do ciclo atual foram arquivados. A câmera voltou para Aguardando teste."
+                if action == "Em operação" and not install_photo_data:
+                    msg = "Para ativar a câmera, é obrigatório tirar/enviar a foto da instalação."
+                elif action == "Retirada":
+                    # Retirada da obra NÃO significa recebida na central.
+                    # Mantém cliente/obra/local vinculados e muda para Em retorno.
+                    # O ciclo só será limpo quando o gestor confirmar "Recebida na central" no painel.
+                    now = datetime.now().isoformat()
+                    ret_note = (note + " | " if note else "") + "Retirada da obra confirmada em campo. Câmera em retorno para a central."
+                    execute("UPDATE cameras SET status=?, patrimonial_status=?, updated_at=? WHERE id=?", ("Em retorno", "Em retorno", now, camera["id"]))
+                    execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (camera["id"], camera["contract_id"], camera["contract_id"], old_loc, old_loc, old_status, "Em retorno", ret_note, "Campo", now))
+                    msg = "Câmera retirada da obra. Ela está em retorno para a central."
                 else:
                     if install_photo_data:
                         execute("UPDATE cameras SET status=?, current_location=?, last_install_photo=?, updated_at=? WHERE id=?", (action, new_loc, install_photo_data, datetime.now().isoformat(), camera["id"]))
@@ -1082,7 +1121,7 @@ def campo():
             if idx <= max_done:
                 btns.append(f'<button type="button" class="done" disabled>✅ {label}</button>')
             elif step == next_step:
-                confirm = ' onclick="return confirm(\'Confirmar retirada? Os dados operacionais serão limpos e a câmera ficará aguardando teste.\')"' if step == 'Retirada' else ''; btns.append(f'<button name="action" value="{step}" class="active-step"{confirm}>{label}</button>')
+                confirm = ' onclick="return confirm(\'Confirmar retirada da obra? A câmera ficará Em retorno até ser recebida na central.\')"' if step == 'Retirada' else ''; btns.append(f'<button name="action" value="{step}" class="active-step"{confirm}>{label}</button>')
             else:
                 btns.append(f'<button type="button" class="locked" disabled>🔒 {label}</button>')
         buttons_html = "".join(btns)
@@ -1097,7 +1136,7 @@ body{font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;color:#0f172a;mar
 {% if msg %}<div class="card"><b>{{msg}}</b></div>{% endif %}
 <div class="card"><button type="button" id="startQr">📷 Ler QR Code</button><div id="reader" class="reader" style="display:none"></div><form method="post" id="lookup"><label>Código da câmera<input id="code" name="code" placeholder="7S-CAM-001" value="{{request.form.get('code','') or request.args.get('code','')}}"></label><button>Buscar câmera</button></form><p class="tag">Se a câmera do celular não abrir, digite o código manualmente.</p></div>
 {% if camera %}<div class="card"><h2>{{camera['code']}}</h2><p><span class="badge">Status atual: {{camera['status']}}</span></p><p><b>Cliente:</b> {{camera['client_name'] or '-'}}</p><p><b>Obra:</b> {{camera['obra'] or '-'}}</p><p><b>Local:</b> {{camera['current_location'] or '-'}}</p><p><b>Serviço:</b> {{camera['service'] or '-'}}</p></div>
-<div class="card"><form method="post" enctype="multipart/form-data"><input type="hidden" name="code" value="{{camera['code']}}"><label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label>{% if next_step == 'Em operação' %}<label>📸 Foto da instalação (opcional)<input type="file" name="install_photo" accept="image/*" capture="environment"></label><p class="small">A foto não trava o fluxo. Se enviada, ficará anexada ao histórico da câmera.</p>{% endif %}<p class="tag"><b>Fluxo operacional</b></p><p class="small">Etapas concluídas ficam verdes e bloqueadas. Somente a próxima etapa fica liberada.</p>{% if camera['status'] == 'Aguardando teste' %}<p style="background:#fef3c7;border-radius:12px;padding:12px"><b>🧪 Aguardando teste:</b> esta câmera precisa ser testada e aprovada no painel antes de ser enviada para nova obra.</p>{% endif %}{{buttons_html|safe}}<hr style="border:0;border-top:1px solid #eef2f7;margin:18px 0"><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="PROBLEMA" class="danger">🔴 Registrar problema</button></form></div>
+<div class="card"><form method="post" enctype="multipart/form-data"><input type="hidden" name="code" value="{{camera['code']}}"><label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label>{% if next_step == 'Em operação' %}<label>📸 Foto da instalação (obrigatória)<input type="file" name="install_photo" accept="image/*" capture="environment" required></label><p class="small">A foto é obrigatória para ativar a câmera e ficará anexada ao histórico.</p>{% endif %}<p class="tag"><b>Fluxo operacional</b></p><p class="small">Etapas concluídas ficam verdes e bloqueadas. Somente a próxima etapa fica liberada.</p>{% if camera['status'] == 'Aguardando teste' %}<p style="background:#fef3c7;border-radius:12px;padding:12px"><b>🧪 Aguardando teste:</b> esta câmera precisa ser testada e aprovada no painel antes de ser enviada para nova obra.</p>{% endif %}{{buttons_html|safe}}<hr style="border:0;border-top:1px solid #eef2f7;margin:18px 0"><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="PROBLEMA" class="danger">🔴 Registrar problema</button></form></div>
 <div class="card"><h3>Histórico recente</h3><div class="timeline">{% for h in history %}<div class="timeline-item"><b>{{h['new_status']}}</b><br><span class="small">{{h['created_at'][:16].replace('T',' ')}} · {{h['user_name'] or 'Campo'}}</span><br><span class="small">{{h['note'] or ''}}</span></div>{% else %}<p class="tag">Sem histórico ainda.</p>{% endfor %}</div></div>{% endif %}
 </div><script>let scanner=null;document.getElementById('startQr').addEventListener('click', async()=>{const r=document.getElementById('reader');r.style.display='block'; if(!window.Html5Qrcode){alert('Leitor QR não carregou. Digite o código manualmente.');return;} scanner=new Html5Qrcode('reader'); try{await scanner.start({facingMode:'environment'},{fps:10,qrbox:220}, txt=>{document.getElementById('code').value=txt.trim(); scanner.stop(); document.getElementById('lookup').submit();});}catch(e){alert('Não foi possível abrir a câmera. Verifique HTTPS/permissão ou digite o código manualmente.');}});</script>
 </body></html>
