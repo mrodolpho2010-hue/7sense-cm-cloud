@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "2.0.3 Fluxo de retorno e foto obrigatória"
+APP_VERSION = "2.0.4 Estoque e aprovação operacional"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -33,7 +33,7 @@ app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # limite de upload para foto
 
 SERVICOS = ["IA Segurança", "Timelapse", "IA BIM", "Acompanhamento de Valas", "Controle de Pessoas", "Monitoramento de Equipamentos", "Outro"]
 STATUS_CONTRATO = ["Planejamento", "Implantação", "Operação", "Manutenção", "Encerrado"]
-STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Disponível", "Em estoque", "Reservada", "Em transporte", "Chegou na obra", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Aposentada", "Descartada"]
+STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Em estoque", "Reservada", "Em transporte", "Chegou na obra", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Aposentada", "Descartada"]
 STATUS_ATENCAO = ["Offline", "Em manutenção"]
 
 
@@ -176,6 +176,16 @@ def init_db():
         execute("INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)", ("Marcos", "marcos@7sense.local", generate_password_hash("123456"), "operacao"))
     if not one("SELECT id FROM users WHERE email=?", ("diretoria@7sense.local",)):
         execute("INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)", ("Diretoria", "diretoria@7sense.local", generate_password_hash("123456"), "diretoria"))
+    # V2.0.4: normaliza o conceito de estoque.
+    # "Disponível" deixou de ser um status próprio; agora é representado por "Testada e aprovada".
+    try:
+        execute("UPDATE cameras SET status='Testada e aprovada' WHERE status='Disponível'")
+    except Exception:
+        pass
+    try:
+        execute("UPDATE cameras SET patrimonial_status='Em estoque' WHERE status IN ('Aguardando teste','Testada e aprovada','Em estoque') AND (patrimonial_status IS NULL OR patrimonial_status='')")
+    except Exception:
+        pass
 
 
 def current_user():
@@ -455,7 +465,7 @@ def dashboard():
     df = 0
     contracts_active = count("SELECT COUNT(*) FROM contracts WHERE status!='Encerrado' AND demo=?", (df,))
     cams_operation = count("SELECT COUNT(*) FROM cameras WHERE status='Em operação' AND demo=?", (df,))
-    cams_available = count("SELECT COUNT(*) FROM cameras WHERE status IN ('Disponível','Em estoque','Testada e aprovada') AND demo=?", (df,))
+    cams_available = count("SELECT COUNT(*) FROM cameras WHERE status='Testada e aprovada' AND demo=?", (df,))
     occ_open = count("SELECT COUNT(*) FROM occurrences WHERE status IN ('Aberta','Em andamento') AND archived_at IS NULL AND demo=?", (df,))
     today = date.today().isoformat()
     agenda_today = count("SELECT COUNT(*) FROM agenda WHERE event_date=? AND demo=?", (today, df))
@@ -463,7 +473,7 @@ def dashboard():
     <div class="grid">
       <a class="card metric" href="{url_for('contracts')}"><h3>Contratos ativos</h3><b>{contracts_active}</b></a>
       <a class="card metric" href="{url_for('cameras', status='Em operação')}"><h3>Câmeras em operação</h3><b>{cams_operation}</b></a>
-      <a class="card metric" href="{url_for('cameras', status='Disponíveis')}"><h3>Câmeras disponíveis</h3><b>{cams_available}</b></a>
+      <a class="card metric" href="{url_for('cameras', status='Testada e aprovada')}"><h3>Câmeras disponíveis</h3><b>{cams_available}</b></a>
       <a class="card metric {'danger' if occ_open else ''}" href="{url_for('occurrences', status='abertas')}"><h3>Ocorrências em aberto</h3><b>{occ_open}</b></a>
       <a class="card metric" href="{url_for('agenda_page', filtro='hoje')}"><h3>Agenda do dia</h3><b>{agenda_today}</b></a>
     </div>
@@ -604,8 +614,9 @@ def cameras():
     status = request.args.get("status", "Todas")
     params = (current_demo_flag(),)
     where = "WHERE ca.demo=?"
-    if status == "Disponíveis":
-        where += " AND ca.status IN ('Disponível','Em estoque','Testada e aprovada')"
+    if status == "Em estoque":
+        # Estoque físico: câmeras na central, incluindo as que aguardam teste e as já aprovadas.
+        where += " AND (ca.status IN ('Aguardando teste','Testada e aprovada','Em estoque') OR ca.patrimonial_status='Em estoque')"
     elif status != "Todas":
         where += " AND ca.status=?"; params = (current_demo_flag(), status)
     rows = query(f"""SELECT ca.*, co.obra, co.city contract_city, co.state contract_state, cl.name client_name
@@ -614,12 +625,12 @@ def cameras():
                     LEFT JOIN clients cl ON cl.id=co.client_id
                     {where}
                     ORDER BY cl.name, co.obra, ca.code""", params)
-    filters = ["Todas", "Em operação", "Disponíveis", "Em estoque", "Em transporte", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Testada e aprovada", "Aguardando teste"]
+    filters = ["Todas", "Em operação", "Em estoque", "Em transporte", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Testada e aprovada", "Aguardando teste"]
     def filter_count(label):
         if label == "Todas":
             return count("SELECT COUNT(*) FROM cameras WHERE demo=?", (current_demo_flag(),))
-        if label == "Disponíveis":
-            return count("SELECT COUNT(*) FROM cameras WHERE status IN ('Disponível','Em estoque','Testada e aprovada') AND demo=?", (current_demo_flag(),))
+        if label == "Em estoque":
+            return count("SELECT COUNT(*) FROM cameras WHERE (status IN ('Aguardando teste','Testada e aprovada','Em estoque') OR patrimonial_status='Em estoque') AND demo=?", (current_demo_flag(),))
         return count("SELECT COUNT(*) FROM cameras WHERE status=? AND demo=?", (label, current_demo_flag()))
     fhtml = "".join([f"<a class='{ 'active' if status==s else ''}' href='{url_for('cameras', status=s)}'>{s} ({filter_count(s)})</a>" for s in filters])
 
@@ -651,7 +662,7 @@ def cameras():
     items = "".join(blocks)
 
     body = f"""<div class='panel'><div class='actions'><h2 style='flex:1'>Câmeras</h2>{'<a class=\"btn primary\" href=\"'+url_for('camera_new')+'\">Nova câmera</a>' if current_user()['role']=='operacao' else ''}</div>
-    <p class='tag'>Visualização por <b>cliente</b>, depois <b>obra</b>, depois <b>câmera</b>. Assim fica claro antes de qual cliente e obra estamos falando.</p>
+    <p class='tag'>Visualização por <b>cliente</b>, depois <b>obra</b>, depois <b>câmera</b>. <b>Em estoque</b> inclui câmeras aguardando teste e testadas/aprovadas.</p>
     <div class='filters'>{fhtml}</div>{items or '<p>Nenhuma câmera.</p>'}</div>"""
     return page(body, breadcrumb="Dashboard > Câmeras")
 
@@ -675,14 +686,16 @@ def camera_form(r=None, contract_id=None):
         cr = one("SELECT client_id FROM contracts WHERE id=?", (selected_contract_id,))
         selected_client_id = str(cr["client_id"]) if cr and cr["client_id"] else ""
     if request.method == "POST":
-        vals = (request.form.get("model"), request.form.get("serial"), request.form.get("contract_id") or None, request.form.get("current_location"), request.form.get("service"), request.form.get("status"), request.form.get("notes"), datetime.now().isoformat())
+        status_form = request.form.get("status") or "Aguardando teste"
+        patrimonial_status = "Em estoque" if status_form in ("Aguardando teste", "Testada e aprovada", "Em estoque") else status_form
+        vals = (request.form.get("model"), request.form.get("serial"), request.form.get("contract_id") or None, request.form.get("current_location"), request.form.get("service"), status_form, request.form.get("notes"), datetime.now().isoformat(), patrimonial_status)
         if r:
-            execute("UPDATE cameras SET model=?,serial=?,contract_id=?,current_location=?,service=?,status=?,notes=?,updated_at=? WHERE id=?", vals+(r["id"],))
+            execute("UPDATE cameras SET model=?,serial=?,contract_id=?,current_location=?,service=?,status=?,notes=?,updated_at=?,patrimonial_status=? WHERE id=?", vals+(r["id"],))
             flash("Câmera atualizada.")
             return redirect(url_for("camera_view", id=r["id"]))
         code = request.form.get("code") or next_camera_code()
-        execute("INSERT INTO cameras(code,model,serial,contract_id,current_location,service,status,notes,demo,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (code,)+vals[:7]+(current_demo_flag(),)+vals[7:]+(datetime.now().isoformat(),))
-        flash("Câmera criada.")
+        execute("INSERT INTO cameras(code,model,serial,contract_id,current_location,service,status,notes,demo,updated_at,created_at,patrimonial_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (code,)+vals[:7]+(current_demo_flag(),)+vals[7:8]+(datetime.now().isoformat(), vals[8]))
+        flash("Câmera criada em estoque, aguardando teste.")
         return redirect(url_for("cameras"))
     def val(k): return (r[k] if r else "") or ""
     client_opts = "<option value=''>Sem cliente / estoque</option>" + "".join([f"<option value='{cl['id']}' {'selected' if selected_client_id==str(cl['id']) else ''}>{cl['name']}</option>" for cl in clients_rows])
@@ -777,7 +790,7 @@ def camera_receive_central(id):
         active_occ_count = count("SELECT COUNT(*) FROM occurrences WHERE camera_id=? AND archived_at IS NULL", (id,))
         execute("UPDATE occurrences SET archived_at=?, archived_contract_id=?, archived_location=? WHERE camera_id=? AND archived_at IS NULL", (now, c["contract_id"], old_loc, id))
         note = f"Câmera recebida na central. Dados operacionais limpos; {active_occ_count} ocorrência(s) arquivada(s) no histórico da obra; câmera aguardando teste."
-        execute("UPDATE cameras SET status=?, contract_id=NULL, current_location='', service='', removal_authorized_at=NULL, removal_authorized_by=NULL, patrimonial_status=?, updated_at=? WHERE id=?", ("Aguardando teste", "Em preparação", now, id))
+        execute("UPDATE cameras SET status=?, contract_id=NULL, current_location='', service='', removal_authorized_at=NULL, removal_authorized_by=NULL, patrimonial_status=?, updated_at=? WHERE id=?", ("Aguardando teste", "Em estoque", now, id))
         execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (id, c["contract_id"], None, old_loc, "", old_status, "Recebida na central / Aguardando teste", note, current_user()["name"], now))
         flash("Câmera recebida na central. Ela agora está aguardando teste.")
         return redirect(url_for("camera_view", id=id))
@@ -842,7 +855,7 @@ def camera_approve(id):
         note = request.form.get("note", "")
         checklist = "; ".join(checked) + ((" | " + note) if note else "")
         old_status = c["status"]
-        execute("UPDATE cameras SET status=?, patrimonial_status=?, tested_approved_at=?, tested_checklist=?, updated_at=? WHERE id=?", ("Testada e aprovada", "Disponível", datetime.now().isoformat(), checklist, datetime.now().isoformat(), id))
+        execute("UPDATE cameras SET status=?, patrimonial_status=?, tested_approved_at=?, tested_checklist=?, updated_at=? WHERE id=?", ("Testada e aprovada", "Em estoque", datetime.now().isoformat(), checklist, datetime.now().isoformat(), id))
         execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Testada e aprovada", "Checklist: " + checklist, current_user()["name"], datetime.now().isoformat()))
         flash("Câmera testada e aprovada para novo envio.")
         return redirect(url_for("camera_view", id=id))
