@@ -2,7 +2,7 @@ import os
 import sqlite3
 from datetime import datetime, date, timedelta
 from functools import wraps
-from flask import Flask, request, redirect, url_for, session, flash, jsonify, render_template_string, send_file
+from flask import Flask, request, redirect, url_for, session, flash, jsonify, render_template_string, send_file, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from io import BytesIO
 import qrcode
@@ -51,7 +51,7 @@ def db():
     if USE_POSTGRES:
         if psycopg is None:
             raise RuntimeError("DATABASE_URL definido, mas o driver psycopg não está instalado. Verifique requirements.txt")
-        return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        return psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10)
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     return con
@@ -179,9 +179,15 @@ def init_db():
 
 
 def current_user():
+    # Evita abrir várias conexões ao Supabase na mesma página.
+    # Antes, cada linha de câmera chamava current_user() e abria uma nova conexão,
+    # causando lentidão/timeout no Render com PostgreSQL.
     if "user_id" not in session:
         return None
-    return one("SELECT * FROM users WHERE id=?", (session["user_id"],))
+    if hasattr(g, "current_user_cache"):
+        return g.current_user_cache
+    g.current_user_cache = one("SELECT * FROM users WHERE id=?", (session["user_id"],))
+    return g.current_user_cache
 
 
 def login_required(f):
@@ -568,14 +574,14 @@ def contract_form(r=None):
 def contract_view(id):
     r = one("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.id=?", (id,))
     cams = query("SELECT ca.*, co.obra, cl.name client_name FROM cameras ca LEFT JOIN contracts co ON co.id=ca.contract_id LEFT JOIN clients cl ON cl.id=co.client_id WHERE ca.contract_id=? ORDER BY ca.code", (id,))
-    items = "".join([camera_row(c) for c in cams])
+    items = "".join([camera_row(c, current_user()["role"] if current_user() else None) for c in cams])
     body = f"""<div class="panel"><h2>{r['client_name']} – {r['obra']}</h2><p><span class="badge {status_class(r['status'])}">{r['status']}</span> · {r['city']}/{r['state']} · Previstas: {r['expected_cameras']}</p>
     <div class="actions"><a class="btn" href="{url_for('contracts')}">Voltar</a>{'<a class=\"btn primary\" href=\"'+url_for('camera_new', contract_id=r['id'])+'\">Adicionar câmera</a>' if current_user()['role']=='operacao' else ''}</div></div>
     <div class="panel"><h2>Câmeras do contrato</h2>{items or '<p>Nenhuma câmera.</p>'}</div>"""
     return page(body, breadcrumb=f"Dashboard > Contratos > {r['client_name']} {r['obra']}")
 
 
-def camera_row(c):
+def camera_row(c, user_role=None):
     # Compatível com SQLite Row, psycopg dict_row e bancos antigos sem algumas colunas.
     cam_id = rv(c, 'id')
     code = rv(c, 'code', '-') or '-'
@@ -583,8 +589,8 @@ def camera_row(c):
     cls = status_class(status)
     aprovado = " 🧪" if (rv(c, 'tested_approved_at') or status == "Testada e aprovada") else ""
     qr_btn = f"<a class='btn small' href='{url_for('camera_qr', id=cam_id)}'>📷 QR</a>"
-    test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=cam_id)}'>🧪 Teste</a>" if current_user() and current_user()['role']=='operacao' else ""
-    edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=cam_id)}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=cam_id)}'>Transferir</a>") if current_user() and current_user()['role']=='operacao' else ""
+    test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=cam_id)}'>🧪 Teste</a>" if (user_role or (current_user()['role'] if current_user() else None))=='operacao' else ""
+    edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=cam_id)}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=cam_id)}'>Transferir</a>") if (user_role or (current_user()['role'] if current_user() else None))=='operacao' else ""
     cliente = rv(c, 'client_name', '-') or '-'
     obra = rv(c, 'obra', '-') or '-'
     local = rv(c, 'current_location', '-') or '-'
@@ -627,7 +633,7 @@ def cameras():
         total_cliente = sum(len(v) for v in obras.values())
         obra_blocks = []
         for obra, cams in obras.items():
-            cam_rows = "".join([camera_row(cam) for cam in cams])
+            cam_rows = "".join([camera_row(cam, current_user()["role"] if current_user() else None) for cam in cams])
             obra_blocks.append(f"""<details class='card' open>
                 <summary style='cursor:pointer;font-weight:700'>🏗 {obra} <span class='badge muted'>{len(cams)} câmera(s)</span></summary>
                 <div style='margin-top:10px'>{cam_rows}</div>
