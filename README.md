@@ -1,10 +1,14 @@
-# 7Sense CM Cloud v1.9.7
+# 7Sense CM v1.9.8
 
-Correção do modo demonstração:
+Ajuste fino da tela de login:
+- Remove cabeçalho/menu da tela de entrada.
+- Remove exibição de e-mails/senhas padrão.
+- Login limpo e centralizado.
+- Link "Esqueci minha senha".
+- Mantém operação oficial como modo padrão.
 
-- Sistema abre sempre no modo operação oficial.
-- Entrar no modo demonstração não limpa o banco oficial.
-- Dados de demonstração usam `demo=1` e códigos `7S-DEMO-CAM-900+`.
-- Botão "Voltar ao modo operação" apenas retorna ao ambiente oficial.
-- QR Codes de demonstração não conflitam com QR Codes reais.
-- Evita travamento/erro no endpoint `/demo/load` no PostgreSQL/Supabase.
+Atualização:
+1. Copiar arquivos para a pasta GitHub `7sense-cm-cloud`.
+2. Commit: `v1.9.8 login limpo`.
+3. Push origin.
+4. Render: Manual Deploy > Clear build cache & deploy.

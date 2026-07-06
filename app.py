@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "1.9.7 Demonstração isolada sem limpar banco oficial"
+APP_VERSION = "1.9.8 Login limpo"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -281,6 +281,28 @@ BASE = r"""
 """
 
 
+LOGIN_BASE = r"""
+<!doctype html><html lang="pt-br"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Entrar no 7Sense</title>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--text:#0f172a;--muted:#64748b;--border:#dbe3ef;--accent:#0f5fff}
+*{box-sizing:border-box} body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}.card{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:28px;width:100%;max-width:520px;box-shadow:0 12px 35px rgba(15,23,42,.08)}.brand{font-weight:900;font-size:28px;margin:0 0 6px}.tag{color:var(--muted);font-size:14px;margin:0 0 22px}label{display:block;margin:14px 0 6px;font-weight:600}input{width:100%;border:1px solid var(--border);border-radius:12px;padding:13px;font-size:16px;background:#fff}.actions{display:flex;gap:12px;align-items:center;margin-top:18px;flex-wrap:wrap}button{border:1px solid var(--accent);background:var(--accent);color:white;border-radius:12px;padding:12px 18px;font-size:16px;cursor:pointer}.link{color:var(--accent);font-size:14px}.flash{background:#fef3c7;border:1px solid #fde68a;border-radius:12px;padding:10px;margin-bottom:14px}.footer{font-size:12px;color:var(--muted);margin-top:22px;text-align:center}
+</style></head><body>
+<div class="card">
+  <div class="brand">7Sense</div>
+  <p class="tag">Data into Action · Contract Manager</p>
+  {% with messages = get_flashed_messages() %}{% if messages %}{% for m in messages %}<div class="flash">{{m}}</div>{% endfor %}{% endif %}{% endwith %}
+  {{body|safe}}
+  <div class="footer">Acesso restrito à operação 7Sense.</div>
+</div>
+</body></html>
+"""
+
+
+def login_page(body):
+    return render_template_string(LOGIN_BASE, body=body)
+
+
 def page(body, breadcrumb="Dashboard", **ctx):
     return render_template_string(BASE, body=body, user=current_user(), version=APP_VERSION, breadcrumb=breadcrumb, mode_label=mode_label(), demo_mode=is_demo_mode(), **ctx)
 
@@ -300,11 +322,40 @@ def login():
             return redirect(url_for("dashboard"))
         flash("Usuário ou senha inválidos.")
     body = """
-    <div class="card mobile-card"><div class="hero">Entrar no 7Sense CM</div><p class="tag">Gerenciamento de contratos e câmeras.</p>
-    <form method="post"><p><label>Email<input name="email" value="marcos@7sense.local"></label></p><p><label>Senha<input name="password" type="password" value="123456"></label></p><button class="primary">Entrar</button></form>
-    <p class="tag">Operação: marcos@7sense.local / 123456<br>Diretoria: diretoria@7sense.local / 123456</p></div>
+    <h1 style="margin:0 0 8px;font-size:26px">Entrar no 7Sense</h1>
+    <p class="tag">Informe seu e-mail e senha para acessar o painel.</p>
+    <form method="post">
+      <label>Email</label>
+      <input name="email" type="email" autocomplete="username" placeholder="seuemail@empresa.com.br" required>
+      <label>Senha</label>
+      <input name="password" type="password" autocomplete="current-password" placeholder="Digite sua senha" required>
+      <div class="actions">
+        <button>Entrar</button>
+        <a class="link" href="/forgot-password">Esqueci minha senha</a>
+      </div>
+    </form>
     """
-    return page(body, breadcrumb="Login")
+    return login_page(body)
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "POST":
+        flash("Solicitação registrada. Procure o administrador do sistema para redefinir sua senha.")
+        return redirect(url_for("login"))
+    body = """
+    <h1 style="margin:0 0 8px;font-size:26px">Recuperar acesso</h1>
+    <p class="tag">Informe seu e-mail. Nesta fase, a redefinição será tratada pelo administrador do sistema.</p>
+    <form method="post">
+      <label>Email</label>
+      <input name="email" type="email" placeholder="seuemail@empresa.com.br" required>
+      <div class="actions">
+        <button>Solicitar redefinição</button>
+        <a class="link" href="/login">Voltar ao login</a>
+      </div>
+    </form>
+    """
+    return login_page(body)
 
 
 @app.route("/logout")
