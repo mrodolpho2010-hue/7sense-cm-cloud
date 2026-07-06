@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "1.9.8 Login limpo"
+APP_VERSION = "2.0 Release Comercial"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -33,7 +33,7 @@ app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # limite de upload para foto
 
 SERVICOS = ["IA Segurança", "Timelapse", "IA BIM", "Acompanhamento de Valas", "Controle de Pessoas", "Monitoramento de Equipamentos", "Outro"]
 STATUS_CONTRATO = ["Planejamento", "Implantação", "Operação", "Manutenção", "Encerrado"]
-STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Em estoque", "Em transporte", "Chegou na obra", "Instalando", "Em operação", "Offline", "Em manutenção", "Retirada", "Aposentada"]
+STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Disponível", "Em estoque", "Reservada", "Em transporte", "Chegou na obra", "Instalando", "Em operação", "Aguardando retirada", "Offline", "Em manutenção", "Retirada", "Aposentada", "Descartada"]
 STATUS_ATENCAO = ["Offline", "Em manutenção"]
 
 
@@ -138,6 +138,16 @@ def init_db():
         execute("ALTER TABLE cameras ADD COLUMN last_install_photo TEXT")
     except Exception:
         pass
+    # V2.0: governança de retirada e status patrimonial simples
+    for col in [
+        "removal_authorized_at TEXT",
+        "removal_authorized_by TEXT",
+        "patrimonial_status TEXT",
+    ]:
+        try:
+            execute(f"ALTER TABLE cameras ADD COLUMN {col}")
+        except Exception:
+            pass
     execute("""CREATE TABLE IF NOT EXISTS camera_history(
         id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id INTEGER, old_contract_id INTEGER, new_contract_id INTEGER, old_location TEXT, new_location TEXT, old_service TEXT, new_service TEXT, old_status TEXT, new_status TEXT, note TEXT, user_name TEXT, created_at TEXT, install_photo TEXT
     )""")
@@ -230,9 +240,9 @@ def status_class(s):
         return "danger"
     if s in ("Em implantação", "Instalando", "Chegou na obra"):
         return "warn"
-    if s in ("Em transporte",):
+    if s in ("Em transporte", "Aguardando retirada", "Reservada"):
         return "info"
-    if s in ("Aguardando teste", "Em estoque", "Retirada", "Aposentada"):
+    if s in ("Aguardando teste", "Em estoque", "Disponível", "Retirada", "Aposentada", "Descartada"):
         return "muted"
     return "ok"
 
@@ -247,16 +257,16 @@ def rv(row, key, default=""):
 
 
 def is_demo_mode():
-    """Modo visual/operacional atual. Por padrão é sempre Operação Oficial."""
-    return session.get("data_mode") == "demo"
+    """V2.0: o sistema trabalha somente em Operação Oficial."""
+    return False
 
 
 def current_demo_flag():
-    return 1 if is_demo_mode() else 0
+    return 0
 
 
 def mode_label():
-    return "DEMONSTRAÇÃO" if is_demo_mode() else "OPERAÇÃO OFICIAL"
+    return "OPERAÇÃO"
 
 
 def demo_where(alias=None):
@@ -269,12 +279,12 @@ BASE = r"""
 <title>7Sense CM</title>
 <style>
 :root{--bg:#f5f7fb;--card:#fff;--text:#0f172a;--muted:#64748b;--border:#dbe3ef;--accent:#0f5fff;--ok:#0f9f6e;--danger:#dc2626;--warn:#d97706;--info:#2563eb;--softdanger:#fee2e2;--softwarn:#fef3c7;--softok:#dcfce7}
-*{box-sizing:border-box} body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)} a{text-decoration:none;color:inherit} .wrap{max-width:1200px;margin:0 auto;padding:18px}.top{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:14px}.brand{font-weight:800;font-size:20px}.tag{color:var(--muted);font-size:13px}.nav{display:flex;gap:8px;flex-wrap:wrap}.btn,.nav a,button{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-size:15px;cursor:pointer;color:var(--text)}.btn.primary,button.primary{background:var(--accent);color:white;border-color:var(--accent)}.btn.danger{background:var(--danger);color:white}.btn.small{padding:6px 10px;font-size:13px}.grid{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:18px}.metric{display:block}.metric h3{margin:0 0 8px;font-size:18px}.metric b{font-size:36px}.metric.danger{border-color:#fecaca;background:#fff7f7}.metric:hover{box-shadow:0 6px 20px rgba(15,23,42,.08)}.search{display:flex;gap:8px;flex:1;max-width:420px}.search input,input,select,textarea{width:100%;border:1px solid var(--border);border-radius:12px;padding:11px;font-size:15px;background:#fff}textarea{min-height:90px}.panel{background:#fff;border:1px solid var(--border);border-radius:18px;padding:16px;margin-top:12px}.row{display:grid;grid-template-columns:1.2fr 1.2fr 1fr .8fr auto;gap:8px;align-items:center;border-bottom:1px solid #eef2f7;padding:11px 4px}.row:last-child{border-bottom:none}.row.camera{grid-template-columns:.9fr 1fr 1fr 1fr 1fr 1.4fr}.row.danger{background:#fff1f2;color:#991b1b;border-radius:12px;padding-left:10px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:13px;border:1px solid var(--border);background:#f8fafc}.badge.ok{background:var(--softok);color:#166534}.badge.danger{background:var(--softdanger);color:#991b1b}.badge.warn{background:var(--softwarn);color:#92400e}.badge.info{background:#dbeafe;color:#1e40af}.badge.muted{background:#e5e7eb;color:#374151}.filters{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.filters a{border:1px solid var(--border);background:#fff;padding:8px 12px;border-radius:999px}.filters a.active{background:var(--accent);color:#fff}.flash{background:#fef3c7;border:1px solid #fde68a;border-radius:12px;padding:10px;margin:10px 0}.breadcrumb{font-size:14px;color:var(--muted);margin:8px 0 14px}.actions{display:flex;gap:8px;flex-wrap:wrap}.formgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.full{grid-column:1/-1}.mobile-card{max-width:560px;margin:0 auto}.hero{font-size:22px;font-weight:800}.hidden{display:none!important}@media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}.row,.row.camera{display:block}.row>*{margin:5px 0}.formgrid{grid-template-columns:1fr}.top{display:block}.nav{margin-top:10px}.search{max-width:none;margin-top:10px}}
+*{box-sizing:border-box} body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)} a{text-decoration:none;color:inherit} .wrap{max-width:1200px;margin:0 auto;padding:18px}.top{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:14px}.brand{font-weight:800;font-size:20px}.tag{color:var(--muted);font-size:13px}.nav{display:flex;gap:8px;flex-wrap:wrap}.btn,.nav a,button{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-size:15px;cursor:pointer;color:var(--text)}.btn.primary,button.primary{background:var(--accent);color:white;border-color:var(--accent)}.btn.danger{background:var(--danger);color:white}.btn.small{padding:6px 10px;font-size:13px}.grid{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:18px}.metric{display:block}.metric h3{margin:0 0 8px;font-size:18px}.metric b{font-size:36px}.metric.danger{border-color:#fecaca;background:#fff7f7}.metric:hover{box-shadow:0 6px 20px rgba(15,23,42,.08)}.search{display:flex;gap:8px;flex:1;max-width:420px}.search input,input,select,textarea{width:100%;border:1px solid var(--border);border-radius:12px;padding:11px;font-size:15px;background:#fff}textarea{min-height:90px}.panel{background:#fff;border:1px solid var(--border);border-radius:18px;padding:16px;margin-top:12px}.row{display:grid;grid-template-columns:1.2fr 1.2fr 1fr .8fr auto;gap:8px;align-items:center;border-bottom:1px solid #eef2f7;padding:11px 4px}.row:last-child{border-bottom:none}.row.camera{grid-template-columns:.9fr 1fr 1fr 1fr 1fr 1.4fr}.row.danger{background:#fff1f2;color:#991b1b;border-radius:12px;padding-left:10px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:13px;border:1px solid var(--border);background:#f8fafc}.badge.ok{background:var(--softok);color:#166534}.badge.danger{background:var(--softdanger);color:#991b1b}.badge.warn{background:var(--softwarn);color:#92400e}.badge.info{background:#dbeafe;color:#1e40af}.badge.muted{background:#e5e7eb;color:#374151}.filters{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.filters a{border:1px solid var(--border);background:#fff;padding:8px 12px;border-radius:999px}.filters a.active{background:var(--accent);color:#fff}.flash{background:#fef3c7;border:1px solid #fde68a;border-radius:12px;padding:10px;margin:10px 0}.breadcrumb{font-size:14px;color:var(--muted);margin:8px 0 14px}.actions{display:flex;gap:8px;flex-wrap:wrap}.formgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.full{grid-column:1/-1}.mobile-card{max-width:560px;margin:0 auto}.hero{font-size:22px;font-weight:800}.hidden{display:none!important}.settings{position:relative}.settings-menu{display:none;position:absolute;right:0;top:46px;background:#fff;border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 30px rgba(15,23,42,.15);min-width:230px;z-index:20;padding:8px}.settings:hover .settings-menu{display:block}.settings-menu a{display:block;border:0;border-radius:10px;padding:10px 12px;background:#fff}.settings-menu a:hover{background:#f1f5f9}@media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}.row,.row.camera{display:block}.row>*{margin:5px 0}.formgrid{grid-template-columns:1fr}.top{display:block}.nav{margin-top:10px}.search{max-width:none;margin-top:10px}}
 </style>
 </head><body><div class="wrap">
-<div class="top"><div><div class="brand">7Sense – Data into Action</div><div class="tag">Contract Manager {{version}}</div></div>
-<div class="nav"><a href="{{url_for('dashboard')}}">🏠 Dashboard</a><a href="{{url_for('clients')}}">Clientes</a><a href="{{url_for('contracts')}}">Contratos</a><a href="{{url_for('cameras')}}">Câmeras</a><a href="{{url_for('occurrences')}}">Ocorrências</a><a href="{{url_for('agenda_page')}}">Agenda</a><a href="{{url_for('campo')}}">📱 Campo</a>{% if user %}<a href="{{url_for('logout')}}">Sair</a>{% endif %}</div></div>
-{% if user %}<div class="breadcrumb">{{breadcrumb or 'Dashboard'}} · {{user['name']}} · Perfil: {{user['role']}} · Modo: {{mode_label}}</div>{% endif %}{% if demo_mode %}<div class="flash" style="background:#fef3c7;border-color:#f59e0b"><b>🟡 MODO DEMONSTRAÇÃO</b> — usando dados separados de teste. QR Codes demo usam prefixo <b>7S-DEMO-CAM</b> e não conflitam com as câmeras oficiais.</div>{% endif %}
+<div class="top"><div><div class="brand">7Sense – Data into Action</div><div class="tag">Operations Manager {{version}}</div></div>
+<div class="nav"><a href="{{url_for('dashboard')}}">🏠 Dashboard</a><a href="{{url_for('clients')}}">Clientes</a><a href="{{url_for('contracts')}}">Contratos</a><a href="{{url_for('cameras')}}">Câmeras</a><a href="{{url_for('occurrences')}}">Ocorrências</a><a href="{{url_for('agenda_page')}}">Agenda</a><a href="{{url_for('campo')}}">📱 Campo</a>{% if user %}<div class="settings"><a href="{{url_for('settings_page')}}">⚙️ Configurações</a><div class="settings-menu"><a href="{{url_for('profile_page')}}">Meu perfil</a><a href="{{url_for('change_password')}}">Alterar senha</a><a href="{{url_for('users_page')}}">Gerenciar usuários</a><a href="{{url_for('clear_database')}}">Limpar banco de dados</a><a href="{{url_for('about_page')}}">Sobre o sistema</a><a href="{{url_for('logout')}}">Sair</a></div></div>{% endif %}</div></div>
+{% if user %}<div class="breadcrumb">{{breadcrumb or 'Dashboard'}} · Usuário: {{user['name']}} · Perfil: {{user['role']}}</div>{% endif %}
 {% with messages = get_flashed_messages() %}{% if messages %}{% for m in messages %}<div class="flash">{{m}}</div>{% endfor %}{% endif %}{% endwith %}
 {{body|safe}}
 </div></body></html>
@@ -304,7 +314,7 @@ def login_page(body):
 
 
 def page(body, breadcrumb="Dashboard", **ctx):
-    return render_template_string(BASE, body=body, user=current_user(), version=APP_VERSION, breadcrumb=breadcrumb, mode_label=mode_label(), demo_mode=is_demo_mode(), **ctx)
+    return render_template_string(BASE, body=body, user=current_user(), version=APP_VERSION, breadcrumb=breadcrumb, mode_label=mode_label(), demo_mode=False, **ctx)
 
 
 @app.route("/")
@@ -318,7 +328,6 @@ def login():
         u = one("SELECT * FROM users WHERE email=? AND active=1", (request.form.get("email", "").strip(),))
         if u and check_password_hash(u["password_hash"], request.form.get("password", "")):
             session["user_id"] = u["id"]
-            session["data_mode"] = "official"
             return redirect(url_for("dashboard"))
         flash("Usuário ou senha inválidos.")
     body = """
@@ -364,32 +373,96 @@ def logout():
     return redirect(url_for("login"))
 
 
+@app.route("/settings")
+@login_required
+def settings_page():
+    body = """<div class='panel'><h2>⚙️ Configurações</h2><div class='actions'>
+    <a class='btn' href='/profile'>Meu perfil</a><a class='btn' href='/change-password'>Alterar senha</a><a class='btn' href='/users'>Gerenciar usuários</a><a class='btn danger' href='/clear-database'>Limpar banco de dados</a><a class='btn' href='/about'>Sobre o sistema</a><a class='btn' href='/logout'>Sair</a>
+    </div></div>"""
+    return page(body, breadcrumb="Dashboard > Configurações")
+
+@app.route("/profile")
+@login_required
+def profile_page():
+    u=current_user()
+    body=f"""<div class='panel'><h2>Meu perfil</h2><p><b>Nome:</b> {u['name']}</p><p><b>Email:</b> {u['email']}</p><p><b>Perfil:</b> {u['role']}</p></div>"""
+    return page(body, breadcrumb="Dashboard > Meu perfil")
+
+@app.route("/change-password", methods=["GET","POST"])
+@login_required
+def change_password():
+    u=current_user()
+    if request.method=="POST":
+        atual=request.form.get("current_password","")
+        nova=request.form.get("new_password","")
+        confirma=request.form.get("confirm_password","")
+        if not check_password_hash(u["password_hash"], atual):
+            flash("Senha atual inválida.")
+        elif len(nova)<6:
+            flash("A nova senha deve ter pelo menos 6 caracteres.")
+        elif nova!=confirma:
+            flash("A confirmação não confere.")
+        else:
+            execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(nova), u["id"]))
+            flash("Senha alterada com sucesso.")
+            return redirect(url_for("settings_page"))
+    body="""<div class='panel'><h2>Alterar senha</h2><form method='post' class='formgrid'><label>Senha atual<input type='password' name='current_password' required></label><label>Nova senha<input type='password' name='new_password' required></label><label>Confirmar nova senha<input type='password' name='confirm_password' required></label><div class='full'><button class='primary'>Salvar nova senha</button></div></form></div>"""
+    return page(body, breadcrumb="Dashboard > Alterar senha")
+
+@app.route("/users")
+@login_required
+def users_page():
+    rows=query("SELECT id,name,email,role,active FROM users ORDER BY name")
+    items="".join([f"<div class='row'><b>{r['name']}</b><span>{r['email']}</span><span>{r['role']}</span><span>{'Ativo' if r['active'] else 'Inativo'}</span><span></span></div>" for r in rows])
+    return page(f"<div class='panel'><h2>Usuários</h2>{items}</div>", breadcrumb="Dashboard > Usuários")
+
+@app.route("/about")
+@login_required
+def about_page():
+    body=f"""<div class='panel'><h2>Sobre o sistema</h2><p><b>7Sense Operations Manager</b></p><p>Versão: {APP_VERSION}</p><p class='tag'>Sistema para gestão operacional de contratos, patrimônio, câmeras, QR Codes, ocorrências e movimentações de campo.</p></div>"""
+    return page(body, breadcrumb="Dashboard > Sobre")
+
+@app.route("/clear-database", methods=["GET","POST"])
+@operacao_required
+def clear_database():
+    if request.method=="POST":
+        email=request.form.get("admin_email","").strip()
+        senha=request.form.get("admin_password","")
+        palavra=request.form.get("confirm_text","").strip().upper()
+        admin=one("SELECT * FROM users WHERE email=? AND role='operacao' AND active=1", (email,))
+        if not admin or not check_password_hash(admin["password_hash"], senha):
+            flash("Login ou senha de administrador inválidos.")
+        elif palavra!="APAGAR":
+            flash("Digite APAGAR para confirmar.")
+        else:
+            for table in ["agenda","occurrences","camera_history","cameras","contracts","clients"]:
+                execute(f"DELETE FROM {table}")
+            flash("Banco operacional limpo. Usuários foram preservados.")
+            return redirect(url_for("dashboard"))
+    body="""<div class='panel'><h2>⚠️ Limpar banco de dados</h2><p>Esta ação apaga clientes, contratos, câmeras, históricos, ocorrências e agenda. Usuários serão preservados.</p><form method='post' class='formgrid'><label>Email do administrador<input name='admin_email' type='email' required></label><label>Senha do administrador<input name='admin_password' type='password' required></label><label class='full'>Digite APAGAR para confirmar<input name='confirm_text' required></label><div class='full'><button class='danger'>Limpar banco de dados</button></div></form></div>"""
+    return page(body, breadcrumb="Dashboard > Limpar banco")
+
+
 @app.route("/app")
 @login_required
 def dashboard():
-    df = current_demo_flag()
+    df = 0
     contracts_active = count("SELECT COUNT(*) FROM contracts WHERE status!='Encerrado' AND demo=?", (df,))
-    cams = count("SELECT COUNT(*) FROM cameras WHERE demo=?", (df,))
-    attention = count("SELECT COUNT(*) FROM cameras WHERE status IN ('Offline','Em manutenção') AND demo=?", (df,))
+    cams_operation = count("SELECT COUNT(*) FROM cameras WHERE status='Em operação' AND demo=?", (df,))
+    cams_available = count("SELECT COUNT(*) FROM cameras WHERE status IN ('Disponível','Em estoque','Testada e aprovada') AND demo=?", (df,))
     occ_open = count("SELECT COUNT(*) FROM occurrences WHERE status IN ('Aberta','Em andamento') AND archived_at IS NULL AND demo=?", (df,))
     today = date.today().isoformat()
     agenda_today = count("SELECT COUNT(*) FROM agenda WHERE event_date=? AND demo=?", (today, df))
     body = f"""
     <div class="grid">
       <a class="card metric" href="{url_for('contracts')}"><h3>Contratos ativos</h3><b>{contracts_active}</b></a>
-      <a class="card metric" href="{url_for('cameras')}"><h3>Câmeras cadastradas</h3><b>{cams}</b></a>
-      <a class="card metric {'danger' if attention else ''}" href="{url_for('cameras', status='atenção')}"><h3>Câmeras com atenção</h3><b>{attention}</b></a>
-      <a class="card metric" href="{url_for('occurrences', status='abertas')}"><h3>Ocorrências abertas</h3><b>{occ_open}</b></a>
-      <a class="card metric" href="{url_for('agenda_page', filtro='hoje')}"><h3>Agenda hoje</h3><b>{agenda_today}</b></a>
+      <a class="card metric" href="{url_for('cameras', status='Em operação')}"><h3>Câmeras em operação</h3><b>{cams_operation}</b></a>
+      <a class="card metric" href="{url_for('cameras', status='Disponíveis')}"><h3>Câmeras disponíveis</h3><b>{cams_available}</b></a>
+      <a class="card metric {'danger' if occ_open else ''}" href="{url_for('occurrences', status='abertas')}"><h3>Ocorrências em aberto</h3><b>{occ_open}</b></a>
+      <a class="card metric" href="{url_for('agenda_page', filtro='hoje')}"><h3>Agenda do dia</h3><b>{agenda_today}</b></a>
     </div>
     <div class="panel"><h2>Pesquisa global</h2><form action="{url_for('search')}" class="search"><input name="q" placeholder="Toyota, CAM-007, Sorocaba..."><button>Pesquisar</button></form></div>
-    <div class="panel"><h2>Ambiente de dados</h2>
-      <p><b>Modo atual:</b> {mode_label()}</p>
-      <p class="tag">O sistema sempre abre em <b>Operação Oficial</b>. A demonstração usa dados e QR Codes separados (<b>7S-DEMO-CAM</b>) para não misturar com o banco oficial.</p>
-      <div class="actions">
-        {('<a class="btn primary" href="'+url_for('load_demo')+'">🧪 Entrar no modo demonstração</a>') if not is_demo_mode() else ('<a class="btn primary" href="'+url_for('operation_mode')+'">↩️ Voltar ao modo operação</a><a class="btn" href="'+url_for('load_demo')+'">🔄 Reiniciar demonstração</a>')}
-      </div>
-    </div>
+    <div class="panel"><h2>Gestão operacional</h2><p class="tag">Este painel controla patrimônio, contratos, obras, movimentações e ocorrências. Status técnicos em tempo real, como bateria ou sinal, pertencem à plataforma de monitoramento/IA.</p></div>
     """
     return page(body)
 
@@ -519,8 +592,8 @@ def cameras():
     status = request.args.get("status", "Todas")
     params = (current_demo_flag(),)
     where = "WHERE ca.demo=?"
-    if status == "atenção":
-        where += " AND ca.status IN ('Offline','Em manutenção')"
+    if status == "Disponíveis":
+        where += " AND ca.status IN ('Disponível','Em estoque','Testada e aprovada')"
     elif status != "Todas":
         where += " AND ca.status=?"; params = (current_demo_flag(), status)
     rows = query(f"""SELECT ca.*, co.obra, co.city contract_city, co.state contract_state, cl.name client_name
@@ -529,7 +602,7 @@ def cameras():
                     LEFT JOIN clients cl ON cl.id=co.client_id
                     {where}
                     ORDER BY cl.name, co.obra, ca.code""", params)
-    filters = ["Todas", "Em operação", "Offline", "Em manutenção", "Em estoque", "Em transporte", "Retirada", "Testada e aprovada", "Aguardando teste"]
+    filters = ["Todas", "Em operação", "Disponíveis", "Em estoque", "Em transporte", "Aguardando retirada", "Offline", "Em manutenção", "Retirada", "Testada e aprovada", "Aguardando teste"]
     fhtml = "".join([f"<a class='{ 'active' if status==s else ''}' href='{url_for('cameras', status=s)}'>{s}</a>" for s in filters])
 
     # V1.9: visão hierárquica para operação real: Status > Cliente > Obra > Câmeras.
@@ -640,12 +713,33 @@ def camera_view(id):
     hist_html = "".join(hist_parts)
     occ_html = "".join([f"<div class='row'><b>{o['title']}</b><span>{o['problem']}</span><span>{o['status']}</span><span>{o['created_at'][:16]}</span><span></span></div>" for o in occs])
     occ_hist_html = "".join([f"<div class='row'><b>{o['title']}</b><span>{o['problem']}</span><span>Arquivada</span><span>{(o['archived_at'] or o['created_at'])[:16]}</span><span>{o['archived_location'] or '-'}</span></div>" for o in occs_hist])
-    body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p>{f"<p><b>Última foto da instalação:</b><br><img src='{rv(c, 'last_install_photo', '')}' alt='Foto da instalação' style='max-width:320px;border-radius:14px;border:1px solid #dbe3ef;margin-top:8px'></p>" if rv(c, 'last_install_photo', '') else ''}<div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a>{'<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a>' if current_user()['role']=='operacao' else ''}</div></div>
+    body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p>{f"<p><b>Última foto da instalação:</b><br><img src='{rv(c, 'last_install_photo', '')}' alt='Foto da instalação' style='max-width:320px;border-radius:14px;border:1px solid #dbe3ef;margin-top:8px'></p>" if rv(c, 'last_install_photo', '') else ''}<div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a><a class="btn" href="{url_for('camera_qr', id=c['id'])}">📷 Gerar QR</a>{('<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a><a class=\"btn\" href=\"'+url_for('camera_authorize_removal', id=c['id'])+'\">🔓 Autorizar retirada</a>') if current_user()['role']=='operacao' else ''}</div></div>
     <div class="panel"><h2>Histórico</h2>{hist_html or '<p>Sem histórico.</p>'}</div>
     <div class="panel"><h2>Ocorrências do ciclo atual</h2>{occ_html or '<p>Sem ocorrências ativas neste ciclo.</p>'}</div>
     <div class="panel"><h2>Ocorrências arquivadas de ciclos anteriores</h2>{occ_hist_html or '<p>Sem ocorrências arquivadas.</p>'}</div>"""
     return page(body, breadcrumb=f"Dashboard > Câmeras > {c['code']}")
 
+
+
+@app.route("/cameras/<int:id>/authorize-removal", methods=["GET", "POST"])
+@operacao_required
+def camera_authorize_removal(id):
+    c = one("SELECT ca.*, co.obra, cl.name client_name FROM cameras ca LEFT JOIN contracts co ON co.id=ca.contract_id LEFT JOIN clients cl ON cl.id=co.client_id WHERE ca.id=?", (id,))
+    if not c:
+        flash("Câmera não encontrada.")
+        return redirect(url_for("cameras"))
+    if request.method == "POST":
+        old_status = c["status"]
+        user_name = current_user()["name"]
+        now = datetime.now().isoformat()
+        execute("UPDATE cameras SET status=?, removal_authorized_at=?, removal_authorized_by=?, updated_at=? WHERE id=?", ("Aguardando retirada", now, user_name, now, id))
+        execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Aguardando retirada", "Retirada autorizada pelo painel de controle.", user_name, now))
+        flash("Retirada autorizada. Agora o técnico poderá retirar a câmera pelo QR Code em campo.")
+        return redirect(url_for("camera_view", id=id))
+    body = f"""<div class='panel'><h2>🔓 Autorizar retirada</h2><p>Autorize esta retirada somente após os trâmites internos e encerramento/realocação do contrato.</p>
+    <div class='card'><p><b>Câmera:</b> {c['code']}</p><p><b>Cliente:</b> {c['client_name'] or '-'}</p><p><b>Obra:</b> {c['obra'] or '-'}</p><p><b>Status atual:</b> {c['status']}</p></div>
+    <form method='post' onsubmit="return confirm('Confirmar autorização de retirada desta câmera?')"><button class='primary'>Autorizar retirada</button> <a class='btn' href='{url_for('camera_view', id=id)}'>Cancelar</a></form></div>"""
+    return page(body, breadcrumb=f"Dashboard > Câmeras > Autorizar retirada {c['code']}")
 
 def build_qr_label(code):
     qr = qrcode.QRCode(version=2, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=14, border=4)
@@ -697,7 +791,7 @@ def camera_approve(id):
         note = request.form.get("note", "")
         checklist = "; ".join(checked) + ((" | " + note) if note else "")
         old_status = c["status"]
-        execute("UPDATE cameras SET status=?, tested_approved_at=?, tested_checklist=?, updated_at=? WHERE id=?", ("Testada e aprovada", datetime.now().isoformat(), checklist, datetime.now().isoformat(), id))
+        execute("UPDATE cameras SET status=?, patrimonial_status=?, tested_approved_at=?, tested_checklist=?, updated_at=? WHERE id=?", ("Testada e aprovada", "Disponível", datetime.now().isoformat(), checklist, datetime.now().isoformat(), id))
         execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Testada e aprovada", "Checklist: " + checklist, current_user()["name"], datetime.now().isoformat()))
         flash("Câmera testada e aprovada para novo envio.")
         return redirect(url_for("camera_view", id=id))
@@ -880,6 +974,12 @@ def campo():
                 if hs["new_status"] in workflow:
                     max_done = max(max_done, workflow.index(hs["new_status"]))
         next_step = None if max_done == -2 else (workflow[max_done + 1] if max_done + 1 < len(workflow) else None)
+        # V2.0: retirada só pode ser executada em campo após autorização no painel.
+        if next_step == "Retirada" and camera["status"] != "Aguardando retirada":
+            next_step = None
+        if camera["status"] == "Aguardando retirada":
+            max_done = workflow.index("Em operação")
+            next_step = "Retirada"
 
         if action == "PROBLEMA":
             problem = request.form.get("problem") or "Problema operacional"
@@ -920,7 +1020,7 @@ def campo():
                     active_occ_count = count("SELECT COUNT(*) FROM occurrences WHERE camera_id=? AND archived_at IS NULL", (camera["id"],))
                     execute("UPDATE occurrences SET archived_at=?, archived_contract_id=?, archived_location=? WHERE camera_id=? AND archived_at IS NULL", (archived_at, camera["contract_id"], old_loc, camera["id"]))
                     reset_note = (note + " | " if note else "") + f"Retirada confirmada. Dados operacionais limpos; {active_occ_count} ocorrência(s) arquivada(s) no histórico da obra; câmera aguardando teste."
-                    execute("UPDATE cameras SET status=?, contract_id=NULL, current_location='', service='', updated_at=? WHERE id=?", ("Aguardando teste", datetime.now().isoformat(), camera["id"]))
+                    execute("UPDATE cameras SET status=?, contract_id=NULL, current_location='', service='', removal_authorized_at=NULL, removal_authorized_by=NULL, patrimonial_status=?, updated_at=? WHERE id=?", ("Aguardando teste", "Em preparação", datetime.now().isoformat(), camera["id"]))
                     execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (camera["id"], camera["contract_id"], None, old_loc, "", old_status, "Retirada / Aguardando teste", reset_note, "Campo", archived_at))
                     msg = "Câmera retirada. Dados operacionais e ocorrências do ciclo atual foram arquivados. A câmera voltou para Aguardando teste."
                 else:
@@ -958,6 +1058,12 @@ def campo():
                 if hs["new_status"] in workflow:
                     max_done = max(max_done, workflow.index(hs["new_status"]))
         next_step = None if max_done == -2 else (workflow[max_done + 1] if max_done + 1 < len(workflow) else None)
+        # V2.0: retirada só aparece liberada após autorização feita no painel.
+        if next_step == "Retirada" and camera["status"] != "Aguardando retirada":
+            next_step = None
+        if camera["status"] == "Aguardando retirada":
+            max_done = workflow.index("Em operação")
+            next_step = "Retirada"
         btns = []
         for idx, step in enumerate(workflow):
             label = action_labels[step]
@@ -998,86 +1104,19 @@ def next_free_demo_camera_code(start=900):
 @app.route("/demo/load")
 @operacao_required
 def load_demo():
-    """Ativa o modo demonstração sem apagar ou bloquear o banco oficial.
-
-    A demonstração usa registros marcados com demo=1 e QR Codes 7S-DEMO-CAM-xxx.
-    O botão pode ser acionado várias vezes: se os dados já existem, apenas entra no modo demo.
-    """
-    session["data_mode"] = "demo"
-    now = datetime.now().isoformat()
-    demo_contracts = [
-        ("Toyota DEMO", "Toyota Sorocaba", "Sorocaba", "SP", 10, "Operação"),
-        ("Equinix DEMO", "Tamboré", "Barueri", "SP", 5, "Operação"),
-        ("Microsoft DEMO", "Hortolândia", "Hortolândia", "SP", 6, "Implantação"),
-        ("Zortea DEMO", "Itaituba", "Itaituba", "PA", 3, "Planejamento"),
-        ("Afonso França DEMO", "Hangar Guarulhos", "Guarulhos", "SP", 4, "Manutenção"),
-    ]
-    service_cycle = ["Acompanhamento de Valas","Acompanhamento de Valas","Timelapse","Timelapse","IA Segurança","IA Segurança","Controle de Pessoas","IA BIM","IA BIM","Timelapse"]
-    loc_cycle = ["Retro 01","Retro 01","Torre Norte","Torre Sul","Portaria","Almoxarifado","Entrada","Frente de Obra","Vala 03","Canteiro"]
-    try:
-        cam_num = 900
-        for name, obra, city, st, qt, status in demo_contracts:
-            client = one("SELECT id FROM clients WHERE name=? AND demo=1", (name,))
-            if client:
-                cid = scalar(client)
-                execute("UPDATE clients SET city=?, state=?, active=1 WHERE id=?", (city, st, cid))
-            else:
-                execute("INSERT INTO clients(name,city,state,responsible,active,demo,created_at) VALUES(?,?,?,?,?,?,?)", (name, city, st, "Responsável teste", 1, 1, now))
-                cid = scalar(one("SELECT id FROM clients WHERE name=? AND demo=1 ORDER BY id DESC", (name,)))
-
-            contract = one("SELECT id FROM contracts WHERE client_id=? AND obra=? AND demo=1", (cid, obra))
-            if contract:
-                coid = scalar(contract)
-                execute("UPDATE contracts SET city=?, state=?, expected_cameras=?, status=? WHERE id=?", (city, st, qt, status, coid))
-            else:
-                code_contract = "DEMO-" + contract_code()
-                execute("INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,demo,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (code_contract, cid, obra, city, st, date.today().isoformat(), (date.today()+timedelta(days=365)).isoformat(), qt, status, 1, now))
-                coid = scalar(one("SELECT id FROM contracts WHERE code=? ORDER BY id DESC", (code_contract,)))
-
-            for i in range(qt):
-                code = f"7S-DEMO-CAM-{cam_num:03d}"
-                cstatus = "Em operação"
-                if i == 5 and name.startswith("Toyota"):
-                    cstatus = "Offline"
-                if i == 9 and name.startswith("Toyota"):
-                    cstatus = "Em transporte"
-                existing = one("SELECT id FROM cameras WHERE code=?", (code,))
-                if existing:
-                    cam_id = scalar(existing)
-                    execute("UPDATE cameras SET contract_id=?, current_location=?, service=?, status=?, demo=1, updated_at=? WHERE id=?", (coid, loc_cycle[i % len(loc_cycle)], service_cycle[i % len(service_cycle)], cstatus, now, cam_id))
-                else:
-                    execute("INSERT INTO cameras(code,contract_id,current_location,service,status,demo,updated_at,created_at) VALUES(?,?,?,?,?,?,?,?)", (code, coid, loc_cycle[i % len(loc_cycle)], service_cycle[i % len(service_cycle)], cstatus, 1, now, now))
-                    cam_id = scalar(one("SELECT id FROM cameras WHERE code=?", (code,)))
-                if cstatus == "Offline" and not one("SELECT id FROM occurrences WHERE camera_id=? AND demo=1 AND archived_at IS NULL", (cam_id,)):
-                    execute("INSERT INTO occurrences(camera_id,title,problem,status,responsible,demo,created_at) VALUES(?,?,?,?,?,?,?)", (cam_id,"Sem comunicação","Câmera offline para demonstração","Aberta","João",1,now))
-                cam_num += 1
-
-        if not one("SELECT id FROM agenda WHERE demo=1 AND title=?", ("Instalação Microsoft",)):
-            execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Instalação Microsoft", date.today().isoformat(), "09:00", "Demonstração", 1, now))
-        if not one("SELECT id FROM agenda WHERE demo=1 AND title=?", ("Visita Equinix",)):
-            execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", ("Visita Equinix", date.today().isoformat(), "14:00", "Demonstração", 1, now))
-        flash("Modo demonstração ativado. Dados demo isolados carregados sem alterar dados oficiais.")
-    except Exception as e:
-        session["data_mode"] = "official"
-        flash(f"Erro ao carregar demonstração: {e}")
+    flash("Modo demonstração foi removido na versão 2.0. Use somente a operação oficial.")
     return redirect(url_for("dashboard"))
-
 
 @app.route("/demo/operation")
 @operacao_required
 def operation_mode():
-    session["data_mode"] = "official"
-    flash("Modo operação oficial ativado. Dados reais preservados.")
+    flash("O sistema já está em operação oficial.")
     return redirect(url_for("dashboard"))
-
 
 @app.route("/demo/clear")
 @operacao_required
 def clear_demo():
-    # Em produção, este botão apenas retorna ao modo oficial.
-    # Não apagamos registros demo para evitar locks/erros no PostgreSQL e para manter testes reaproveitáveis.
-    session["data_mode"] = "official"
-    flash("Modo operação oficial ativado. Dados reais preservados.")
+    flash("Modo demonstração removido. Nenhum dado foi alterado.")
     return redirect(url_for("dashboard"))
 
 
