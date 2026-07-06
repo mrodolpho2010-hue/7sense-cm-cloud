@@ -576,14 +576,20 @@ def contract_view(id):
 
 
 def camera_row(c):
-    cls = status_class(c["status"])
-    aprovado = " 🧪" if ("tested_approved_at" in c.keys() and c["tested_approved_at"]) or c["status"] == "Testada e aprovada" else ""
-    qr_btn = f"<a class='btn small' href='{url_for('camera_qr', id=c['id'])}'>📷 QR</a>"
-    test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=c['id'])}'>🧪 Teste</a>" if current_user() and current_user()['role']=='operacao' else ""
-    edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=c['id'])}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=c['id'])}'>Transferir</a>") if current_user() and current_user()['role']=='operacao' else ""
+    # Compatível com SQLite Row, psycopg dict_row e bancos antigos sem algumas colunas.
+    cam_id = rv(c, 'id')
+    code = rv(c, 'code', '-') or '-'
+    status = rv(c, 'status', 'Sem status') or 'Sem status'
+    cls = status_class(status)
+    aprovado = " 🧪" if (rv(c, 'tested_approved_at') or status == "Testada e aprovada") else ""
+    qr_btn = f"<a class='btn small' href='{url_for('camera_qr', id=cam_id)}'>📷 QR</a>"
+    test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=cam_id)}'>🧪 Teste</a>" if current_user() and current_user()['role']=='operacao' else ""
+    edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=cam_id)}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=cam_id)}'>Transferir</a>") if current_user() and current_user()['role']=='operacao' else ""
     cliente = rv(c, 'client_name', '-') or '-'
     obra = rv(c, 'obra', '-') or '-'
-    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{c['code']}{aprovado}</b><span><b>{cliente}</b><br><small>{obra}</small></span><span>{c['current_location'] or '-'}</span><span>{c['service'] or '-'}</span><span><span class='badge {cls}'>{c['status']}</span></span><span class='actions'>{qr_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=c['id'])}'>Ver</a>{edit_btns}</span></div>"
+    local = rv(c, 'current_location', '-') or '-'
+    servico = rv(c, 'service', '-') or '-'
+    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{code}{aprovado}</b><span><b>{cliente}</b><br><small>{obra}</small></span><span>{local}</span><span>{servico}</span><span><span class='badge {cls}'>{status}</span></span><span class='actions'>{qr_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=cam_id)}'>Ver</a>{edit_btns}</span></div>"
 
 
 @app.route("/cameras")
