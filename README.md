@@ -1,15 +1,11 @@
-# 7Sense CM Cloud v3.0.7
+# 7Sense CM Cloud v3.0.8
 
-Alteração principal: links de acesso da Operação de Campo.
+Correções de agenda integrada:
 
-## Incluído
-- Botão **🔗 Copiar link de acesso**: copia a mensagem completa com cliente, obra e link.
-- Botão **💬 Enviar link de acesso**: abre o WhatsApp Web/Desktop com a mesma mensagem pronta.
-- Mantém o botão **Abrir** para teste direto do link da obra.
-- Texto da página Campo ajustado para deixar claro que o link é o acesso operacional da obra.
+- Dashboard agora mostra **Próximos agendamentos** em vez de apenas agenda do dia.
+- Clique no card do Dashboard abre a lista de próximos agendamentos.
+- Tela de Agenda agora possui filtros: **Próximos**, **Hoje** e **Todos**.
+- Novo agendamento volta automaticamente para a lista de próximos agendamentos.
+- Formulário de agendamento usa seletor de calendário e horário do navegador.
 
-## Atualização
-1. Copie os arquivos desta pasta para o repositório GitHub `7sense-cm-cloud`.
-2. Commit: `v3.0.7 links de acesso campo`.
-3. Push origin.
-4. Render: Manual Deploy > Clear build cache & deploy.
+Mantém todas as regras operacionais anteriores.

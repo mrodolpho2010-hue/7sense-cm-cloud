@@ -16,7 +16,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.0.7 Links de acesso do campo"
+APP_VERSION = "3.0.8 Agenda integrada"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -494,7 +494,7 @@ def dashboard():
     cams_total = count("SELECT COUNT(*) FROM cameras WHERE demo=?", (df,))
     occ_open = count("SELECT COUNT(*) FROM occurrences WHERE status IN ('Aberta','Em andamento') AND archived_at IS NULL AND demo=?", (df,))
     today = date.today().isoformat()
-    agenda_today = count("SELECT COUNT(*) FROM agenda WHERE event_date=? AND demo=?", (today, df))
+    agenda_upcoming = count("SELECT COUNT(*) FROM agenda WHERE event_date>=? AND demo=?", (today, df))
 
     flow_items = [
         ("Aguardando teste", "🧪", "Aguardando teste"),
@@ -548,7 +548,7 @@ def dashboard():
     <div class="mini-grid">
       <a class="card hero-card" href="{url_for('contracts')}"><div class="hero-icon">📁</div><div><h3>Contratos ativos</h3><b>{contracts_active}</b><br><span>ver contratos →</span></div></a>
       <a class="card hero-card green" href="{url_for('cameras', status='Em operação')}"><div class="hero-icon">📷</div><div><h3>Câmeras em operação</h3><b>{cams_operation}</b><br><span>ver câmeras →</span></div></a>
-      <a class="card hero-card orange" href="{url_for('agenda_page', filtro='hoje')}"><div class="hero-icon">📅</div><div><h3>Agenda de hoje</h3><b>{agenda_today}</b><br><span>ver agenda →</span></div></a>
+      <a class="card hero-card orange" href="{url_for('agenda_page', filtro='proximos')}"><div class="hero-icon">📅</div><div><h3>Próximos agendamentos</h3><b>{agenda_upcoming}</b><br><span>ver agenda →</span></div></a>
       <a class="card hero-card red" href="{url_for('occurrences', status='abertas')}"><div class="hero-icon">⚠️</div><div><h3>Ocorrências abertas</h3><b>{occ_open}</b><br><span>{'requer atenção' if occ_open else 'sem pendências'}</span></div></a>
     </div>
 
@@ -1140,14 +1140,27 @@ def occurrence_close(id):
 @app.route("/agenda")
 @login_required
 def agenda_page():
-    filtro = request.args.get("filtro")
+    filtro = request.args.get("filtro", "proximos")
+    today = date.today().isoformat()
     if filtro == "hoje":
-        rows = query("SELECT * FROM agenda WHERE event_date=? AND demo=? ORDER BY event_time", (date.today().isoformat(), current_demo_flag()))
+        rows = query("SELECT * FROM agenda WHERE event_date=? AND demo=? ORDER BY event_time", (today, current_demo_flag()))
+        titulo = "Agenda de hoje"
+    elif filtro == "todos":
+        rows = query("SELECT * FROM agenda WHERE demo=? ORDER BY event_date,event_time LIMIT 200", (current_demo_flag(),))
+        titulo = "Todos os agendamentos"
     else:
-        rows = query("SELECT * FROM agenda WHERE demo=? ORDER BY event_date,event_time LIMIT 100", (current_demo_flag(),))
+        rows = query("SELECT * FROM agenda WHERE event_date>=? AND demo=? ORDER BY event_date,event_time LIMIT 100", (today, current_demo_flag()))
+        titulo = "Próximos agendamentos"
     can_edit = current_user()["role"] == "operacao"
-    items = "".join([f"<div class='row'><b>{r['event_date']} {r['event_time']}</b><span>{r['title']}</span><span>{r['notes'] or ''}</span><span></span><span></span></div>" for r in rows])
-    body = f"<div class='panel'><div class='actions'><h2 style='flex:1'>Agenda</h2>{'<a class=\"btn primary\" href=\"'+url_for('agenda_new')+'\">Novo evento</a>' if can_edit else ''}</div>{items or '<p>Nenhum evento.</p>'}</div>"
+    filters = f"""
+      <div class='filters'>
+        <a class='{ 'active' if filtro=='proximos' else '' }' href='{url_for('agenda_page', filtro='proximos')}'>Próximos</a>
+        <a class='{ 'active' if filtro=='hoje' else '' }' href='{url_for('agenda_page', filtro='hoje')}'>Hoje</a>
+        <a class='{ 'active' if filtro=='todos' else '' }' href='{url_for('agenda_page', filtro='todos')}'>Todos</a>
+      </div>
+    """
+    items = "".join([f"<div class='row'><b>{r['event_date']} {r['event_time'] or ''}</b><span>{r['title']}</span><span>{r['notes'] or ''}</span><span></span><span></span></div>" for r in rows])
+    body = f"<div class='panel'><div class='actions'><h2 style='flex:1'>{titulo}</h2>{'<a class="btn primary" href="'+url_for('agenda_new')+'">Novo evento</a>' if can_edit else ''}</div>{filters}{items or '<p>Nenhum evento encontrado.</p>'}</div>"
     return page(body, breadcrumb="Dashboard > Agenda")
 
 
@@ -1157,8 +1170,8 @@ def agenda_new():
     if request.method == "POST":
         execute("INSERT INTO agenda(title,event_date,event_time,notes,demo,created_at) VALUES(?,?,?,?,?,?)", (request.form.get("title"), request.form.get("event_date"), request.form.get("event_time"), request.form.get("notes"), current_demo_flag(), datetime.now().isoformat()))
         flash("Evento criado.")
-        return redirect(url_for("agenda_page"))
-    body = """<div class="panel"><h2>Novo evento</h2><form method="post" class="formgrid"><label>Título<input name="title"></label><label>Data<input type="date" name="event_date"></label><label>Hora<input type="time" name="event_time"></label><label class="full">Observações<textarea name="notes"></textarea></label><div class="full"><button class="primary">Salvar</button></div></form></div>"""
+        return redirect(url_for("agenda_page", filtro="proximos"))
+    body = """<div class="panel"><h2>Novo evento</h2><p class='tag'>Selecione a data e o horário pelo calendário do navegador. O evento aparecerá automaticamente no Dashboard em Próximos agendamentos.</p><form method="post" class="formgrid"><label>Título<input name="title" required placeholder="Ex.: Instalação Toyota"></label><label>Data<input type="date" name="event_date" required onclick="this.showPicker && this.showPicker()"></label><label>Hora<input type="time" name="event_time" required onclick="this.showPicker && this.showPicker()"></label><label class="full">Observações<textarea name="notes" placeholder="Detalhes do agendamento"></textarea></label><div class="full"><button class="primary">Salvar agendamento</button></div></form></div>"""
     return page(body, breadcrumb="Dashboard > Agenda > Novo")
 
 
