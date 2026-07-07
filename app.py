@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.0.2 Links de campo por obra"
+APP_VERSION = "3.0.3 Validação de obra no campo"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -1177,16 +1177,25 @@ def campo_core(contract_id=None):
         camera = load_camera_by_code(code)
         if not camera:
             msg = "Câmera não encontrada. Confira o código."
-        elif contract_ctx and camera["contract_id"] and camera["contract_id"] != contract_id:
-            contract_blocked = True
-            msg = "Esta câmera está vinculada a outra obra/contrato. Confira o QR Code ou transfira a câmera pelo painel antes de operar neste link."
+        elif contract_ctx:
+            if not camera["contract_id"]:
+                contract_blocked = True
+                msg = "Esta câmera ainda não está vinculada a esta obra. Primeiro transfira/reserve a câmera para esta obra no painel antes de operar pelo link de campo."
+            elif camera["contract_id"] != contract_id:
+                contract_blocked = True
+                msg = "Esta câmera está vinculada a outra obra/contrato. Confira o QR Code ou transfira a câmera pelo painel antes de operar neste link."
 
     if request.method == "POST" and camera:
         action = request.form.get("action")
-        if contract_ctx and camera["contract_id"] and camera["contract_id"] != contract_id and action:
-            contract_blocked = True
-            msg = "Operação bloqueada: esta câmera está vinculada a outra obra/contrato."
-            action = None
+        if contract_ctx and action:
+            if not camera["contract_id"]:
+                contract_blocked = True
+                msg = "Operação bloqueada: esta câmera ainda não está vinculada a esta obra. Reserve/transfira no painel antes de usar este link de campo."
+                action = None
+            elif camera["contract_id"] != contract_id:
+                contract_blocked = True
+                msg = "Operação bloqueada: esta câmera está vinculada a outra obra/contrato."
+                action = None
         workflow = ["Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Retirada"]
         action_labels = {
             "Em transporte": "🚚 Em transporte",
@@ -1219,10 +1228,7 @@ def campo_core(contract_id=None):
         if camera["status"] == "Aguardando retirada":
             max_done = workflow.index("Em operação")
             next_step = "Retirada"
-        if contract_ctx and camera["contract_id"] and camera["contract_id"] != contract_id:
-            contract_blocked = True
-            next_step = None
-        if contract_ctx and camera["contract_id"] and camera["contract_id"] != contract_id:
+        if contract_ctx and (not camera["contract_id"] or camera["contract_id"] != contract_id):
             contract_blocked = True
             next_step = None
 
@@ -1241,11 +1247,9 @@ def campo_core(contract_id=None):
                 old_status, old_loc = camera["status"], camera["current_location"]
                 new_loc = request.form.get("local") or camera["current_location"]
                 note = request.form.get("note") or ""
-                # Link de campo por obra: ao iniciar o transporte por um link específico, vincula a câmera à obra se ela ainda estiver livre.
-                if contract_ctx and action == "Em transporte" and not camera["contract_id"]:
-                    execute("UPDATE cameras SET contract_id=?, current_location=?, updated_at=? WHERE id=?", (contract_id, contract_ctx["obra"], datetime.now().isoformat(), camera["id"]))
-                    camera = load_camera_by_code(code)
-                    old_loc = camera["current_location"]
+                # V3.0.3: link de campo é restrito à obra.
+                # A câmera precisa estar previamente reservada/vinculada ao contrato no painel;
+                # o campo não faz vínculo automático para evitar instalação em obra errada.
                 install_photo_data = ""
                 # V1.9: foto opcional da instalação, enviada somente na etapa de ativação.
                 if action == "Em operação" and "install_photo" in request.files:
@@ -1316,6 +1320,10 @@ def campo_core(contract_id=None):
         if camera["status"] == "Aguardando retirada":
             max_done = workflow.index("Em operação")
             next_step = "Retirada"
+        # V3.0.3: link de campo por obra bloqueia câmera livre ou vinculada a outra obra.
+        if contract_ctx and (not camera["contract_id"] or camera["contract_id"] != contract_id):
+            contract_blocked = True
+            next_step = None
         btns = []
         for idx, step in enumerate(workflow):
             label = action_labels[step]
@@ -1335,10 +1343,10 @@ body{font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;color:#0f172a;mar
 </style>
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script></head><body><div class="wrap"><div class="card"><div class="hero">7Sense Campo</div><div class="tag">Leitura de QR Code e status operacional da câmera.</div></div>
 {% if msg %}<div class="card"><b>{{msg}}</b></div>{% endif %}
-{% if contract_ctx %}<div class="card"><b>🏗️ Link de campo da obra</b><p><b>Cliente:</b> {{contract_ctx['client_name'] or '-'}}</p><p><b>Obra:</b> {{contract_ctx['obra'] or '-'}}</p><p class="tag">Este link registra as movimentações no contexto desta obra.</p></div>{% endif %}
+{% if contract_ctx %}<div class="card"><b>🏗️ Link de campo da obra</b><p><b>Cliente:</b> {{contract_ctx['client_name'] or '-'}}</p><p><b>Obra:</b> {{contract_ctx['obra'] or '-'}}</p><p class="tag">Este link registra movimentações somente das câmeras previamente vinculadas a esta obra.</p></div>{% endif %}
 <div class="card"><button type="button" id="startQr">📷 Ler QR Code</button><div id="reader" class="reader" style="display:none"></div><form method="post" id="lookup"><label>Código da câmera<input id="code" name="code" placeholder="7S-CAM-001" value="{{request.form.get('code','') or request.args.get('code','')}}"></label><button>Buscar câmera</button></form><p class="tag">Se a câmera do celular não abrir, digite o código manualmente.</p></div>
 {% if camera %}<div class="card"><h2>{{camera['code']}}</h2><p><span class="badge">Status atual: {{camera['status']}}</span></p><p><b>Cliente:</b> {{camera['client_name'] or '-'}}</p><p><b>Obra:</b> {{camera['obra'] or '-'}}</p><p><b>Local:</b> {{camera['current_location'] or '-'}}</p><p><b>Serviço:</b> {{camera['service'] or '-'}}</p></div>
-<div class="card"><form method="post" enctype="multipart/form-data"><input type="hidden" name="code" value="{{camera['code']}}">{% if contract_blocked %}<p style="background:#fee2e2;border-radius:12px;padding:12px;color:#991b1b"><b>Operação bloqueada:</b> câmera vinculada a outra obra/contrato.</p>{% endif %}<label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label>{% if next_step == 'Em operação' %}<label>📸 Foto da instalação (obrigatória)<input type="file" name="install_photo" accept="image/*" capture="environment" required></label><p class="small">A foto é obrigatória para ativar a câmera e ficará anexada ao histórico.</p>{% endif %}<p class="tag"><b>Fluxo operacional</b></p><p class="small">Etapas concluídas ficam verdes e bloqueadas. Somente a próxima etapa fica liberada.</p>{% if camera['status'] == 'Aguardando teste' %}<p style="background:#fef3c7;border-radius:12px;padding:12px"><b>🧪 Aguardando teste:</b> esta câmera precisa ser testada e aprovada no painel antes de ser enviada para nova obra.</p>{% endif %}{{buttons_html|safe}}<hr style="border:0;border-top:1px solid #eef2f7;margin:18px 0"><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="PROBLEMA" class="danger">🔴 Registrar problema</button></form></div>
+<div class="card"><form method="post" enctype="multipart/form-data"><input type="hidden" name="code" value="{{camera['code']}}">{% if contract_blocked %}<p style="background:#fee2e2;border-radius:12px;padding:12px;color:#991b1b"><b>Operação bloqueada:</b> esta câmera não está autorizada para este link de obra.</p>{% endif %}<label>Local atual / instalação<input name="local" placeholder="Poste 1, Retro 1, Portaria..." value="{{camera['current_location'] or ''}}"></label><label>Observação<textarea name="note" placeholder="Observação opcional"></textarea></label>{% if next_step == 'Em operação' %}<label>📸 Foto da instalação (obrigatória)<input type="file" name="install_photo" accept="image/*" capture="environment" required></label><p class="small">A foto é obrigatória para ativar a câmera e ficará anexada ao histórico.</p>{% endif %}<p class="tag"><b>Fluxo operacional</b></p><p class="small">Etapas concluídas ficam verdes e bloqueadas. Somente a próxima etapa fica liberada.</p>{% if camera['status'] == 'Aguardando teste' %}<p style="background:#fef3c7;border-radius:12px;padding:12px"><b>🧪 Aguardando teste:</b> esta câmera precisa ser testada e aprovada no painel antes de ser enviada para nova obra.</p>{% endif %}{{buttons_html|safe}}<hr style="border:0;border-top:1px solid #eef2f7;margin:18px 0"><label>Problema operacional<input name="problem" placeholder="Sem energia, sem sinal, dano físico..."></label><button name="action" value="PROBLEMA" class="danger">🔴 Registrar problema</button></form></div>
 <div class="card"><h3>Histórico recente</h3><div class="timeline">{% for h in history %}<div class="timeline-item"><b>{{h['new_status']}}</b><br><span class="small">{{h['created_at'][:16].replace('T',' ')}} · {{h['user_name'] or 'Campo'}}</span><br><span class="small">{{h['note'] or ''}}</span></div>{% else %}<p class="tag">Sem histórico ainda.</p>{% endfor %}</div></div>{% endif %}
 </div><script>let scanner=null;document.getElementById('startQr').addEventListener('click', async()=>{const r=document.getElementById('reader');r.style.display='block'; if(!window.Html5Qrcode){alert('Leitor QR não carregou. Digite o código manualmente.');return;} scanner=new Html5Qrcode('reader'); try{await scanner.start({facingMode:'environment'},{fps:10,qrbox:220}, txt=>{document.getElementById('code').value=txt.trim(); scanner.stop(); document.getElementById('lookup').submit();});}catch(e){alert('Não foi possível abrir a câmera. Verifique HTTPS/permissão ou digite o código manualmente.');}});</script>
 </body></html>
