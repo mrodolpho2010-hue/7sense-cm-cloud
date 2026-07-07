@@ -5,6 +5,7 @@ from functools import wraps
 from flask import Flask, request, redirect, url_for, session, flash, jsonify, render_template_string, send_file, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from io import BytesIO
+from urllib.parse import quote
 import qrcode
 import base64
 from PIL import Image, ImageDraw, ImageFont
@@ -15,7 +16,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.0.6 Links diretos para ocorrências"
+APP_VERSION = "3.0.7 Links de acesso do campo"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -1200,15 +1201,24 @@ def field_links():
         for r in contracts_list:
             path = url_for('campo_contract', contract_id=r['id'])
             full = request.host_url.rstrip('/') + path
-            msg = f"Olá, para registrar a movimentação das câmeras da obra {r['obra'] or 'obra'}, acesse: {full}  Leia o QR Code da câmera e atualize o status."
+            msg = f"""7Sense Operations Manager - Link de acesso à operação de campo
+
+Cliente: {r['client_name'] or 'Sem cliente'}
+Obra: {r['obra'] or 'Obra sem nome'} - {r['city'] or ''}/{r['state'] or ''}
+
+Acesse pelo celular:
+{full}
+
+Após abrir o link, leia o QR Code da câmera e siga apenas as etapas liberadas pelo sistema. Em caso de problema, utilize a opção Registrar problema."""
+            wa_url = "https://web.whatsapp.com/send?text=" + quote(msg)
             inner.append(f"""
             <div class='row' style='grid-template-columns:1.4fr .8fr .7fr auto'>
                 <div><b>🏗️ {r['obra'] or 'Obra sem nome'}</b><br><small>{r['city'] or ''}/{r['state'] or ''}</small></div>
                 <span>{r['cam_count']} câmera(s)</span>
                 <span><span class='badge {status_class(r['status'])}'>{r['status']}</span></span>
                 <span class='actions'>
-                    <button type='button' class='btn small' onclick="copyText('{jsq(full)}')">Copiar link</button>
-                    <button type='button' class='btn small' onclick="copyText('{jsq(msg)}')">Mensagem WhatsApp</button>
+                    <button type='button' class='btn small' onclick="copyText('{jsq(msg)}')">🔗 Copiar link de acesso</button>
+                    <a class='btn small' target='_blank' rel='noopener' href='{wa_url}'>💬 Enviar link de acesso</a>
                     <a class='btn small' target='_blank' href='{path}'>Abrir</a>
                 </span>
             </div>""")
@@ -1216,7 +1226,7 @@ def field_links():
     body = f"""
     <div class='panel'>
         <h2>Campo por obra</h2>
-        <p class='tag'>Gere um link específico da obra para enviar por WhatsApp ao técnico. Ao abrir, ele lê o QR Code da câmera dentro do contexto daquele contrato.</p>
+        <p class='tag'>Gere o link de acesso da obra para enviar ao técnico. O botão copiar leva a mensagem completa com cliente, obra e link; o WhatsApp abre com essa mesma mensagem já preenchida.</p>
     </div>
     {''.join(blocks) if blocks else '<div class="panel"><p>Nenhum contrato ativo encontrado.</p></div>'}
     <script>
