@@ -1,17 +1,17 @@
-# 7Sense Operations Manager v3.0.0
+# 7Sense Operations Manager v3.0.2
 
-Redesign visual leve da interface, mantendo as regras da versão estável.
+## Links de campo por obra
 
-## Incluído
-- Novo tema escuro premium
-- Menu lateral fixo
-- Dashboard com aparência de Operations Center
-- Cards, badges e filtros redesenhados
-- Login com identidade visual 7Sense
-- Sem alteração na lógica operacional, banco ou rotas
+Incluído:
+- Menu Campo agora abre uma lista de clientes/obras/contratos.
+- Botão para copiar link de campo específico da obra.
+- Botão para copiar mensagem pronta para WhatsApp.
+- Novo endpoint `/campo/contrato/<id>`.
+- Técnico abre o link da obra, lê o QR Code e registra a movimentação no contexto daquele contrato.
+- Se a câmera estiver livre e testada/aprovada, ao iniciar transporte pelo link da obra ela é vinculada ao contrato.
+- Se a câmera estiver vinculada a outra obra, o sistema bloqueia a operação para evitar erro.
 
-## Deploy
-1. Copiar arquivos para o repositório GitHub.
-2. Commit: `v3.0.0 redesign visual`
-3. Push origin.
-4. Render: Manual Deploy > Clear build cache & deploy.
+Mantido:
+- Banco Supabase/PostgreSQL.
+- Fluxo operacional existente.
+- Layout Operations Center.
