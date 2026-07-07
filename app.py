@@ -16,7 +16,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.0.8 Agenda integrada"
+APP_VERSION = "3.1.0 Dossiê da Câmera"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -34,7 +34,7 @@ app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # limite de upload para foto
 
 SERVICOS = ["IA Segurança", "Timelapse", "IA BIM", "Acompanhamento de Valas", "Controle de Pessoas", "Monitoramento de Equipamentos", "Outro"]
 STATUS_CONTRATO = ["Planejamento", "Implantação", "Operação", "Manutenção", "Encerrado"]
-STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Aposentada", "Descartada"]
+STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Inutilizada"]
 STATUS_ATENCAO = ["Offline", "Em manutenção"]
 
 
@@ -188,6 +188,9 @@ def init_db():
         "UPDATE cameras SET status='Na obra aguardando instalação' WHERE status='Chegou na obra'",
         "UPDATE camera_history SET new_status='Na obra aguardando instalação' WHERE new_status='Chegou na obra'",
         "UPDATE camera_history SET old_status='Na obra aguardando instalação' WHERE old_status='Chegou na obra'",
+        "UPDATE cameras SET status='Inutilizada', patrimonial_status='Inutilizada' WHERE status IN ('Aposentada','Descartada')",
+        "UPDATE camera_history SET new_status='Inutilizada' WHERE new_status IN ('Aposentada','Descartada')",
+        "UPDATE camera_history SET old_status='Inutilizada' WHERE old_status IN ('Aposentada','Descartada')",
         "UPDATE cameras SET patrimonial_status='Em estoque' WHERE status IN ('Aguardando teste','Testada e aprovada') AND (patrimonial_status IS NULL OR patrimonial_status='')"
     ]:
         try:
@@ -266,7 +269,7 @@ def status_class(s):
         return "warn"
     if s in ("Em transporte", "Aguardando retirada", "Reservada", "Em retorno", "Na obra aguardando instalação", "Instalando"):
         return "info"
-    if s in ("Aguardando teste", "Em estoque", "Disponível", "Aposentada", "Descartada"):
+    if s in ("Aguardando teste", "Em estoque", "Disponível", "Aposentada", "Descartada", "Inutilizada"):
         return "muted"
     return "ok"
 
@@ -505,6 +508,7 @@ def dashboard():
         ("Aguardando retirada", "⏬", "Aguardando retirada"),
         ("Em retorno", "↩️", "Em retorno"),
         ("Em manutenção", "🔧", "Em manutenção"),
+        ("Inutilizada", "🚫", "Inutilizada"),
     ]
     flow_cards = ""
     flow_counts = []
@@ -706,6 +710,7 @@ def camera_row(c, user_role=None):
     else:
         occ_badge = ""
     qr_btn = f"<a class='btn small' href='{url_for('camera_qr', id=cam_id)}'>📷 QR</a>"
+    dossier_btn = f"<a class='btn small' href='{url_for('camera_dossie', id=cam_id)}'>📑 Dossiê</a>"
     test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=cam_id)}'>🧪 Teste</a>" if (user_role or (current_user()['role'] if current_user() else None))=='operacao' else ""
     edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=cam_id)}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=cam_id)}'>Transferir</a>") if (user_role or (current_user()['role'] if current_user() else None))=='operacao' else ""
     cliente = rv(c, 'client_name', '-') or '-'
@@ -713,7 +718,7 @@ def camera_row(c, user_role=None):
     local = rv(c, 'current_location', '-') or '-'
     servico = rv(c, 'service', '-') or '-'
     ver_label = 'Ver / ocorrência' if active_occ else 'Ver'
-    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{code}{aprovado}</b><span><b>{cliente}</b><br><small>{obra}</small></span><span>{local}</span><span>{servico}</span><span><span class='badge {cls}'>{status}</span>{occ_badge}</span><span class='actions'>{qr_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=cam_id)}'>{ver_label}</a>{edit_btns}</span></div>"
+    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{code}{aprovado}</b><span><b>{cliente}</b><br><small>{obra}</small></span><span>{local}</span><span>{servico}</span><span><span class='badge {cls}'>{status}</span>{occ_badge}</span><span class='actions'>{qr_btn}{dossier_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=cam_id)}'>{ver_label}</a>{edit_btns}</span></div>"
 
 
 @app.route("/cameras")
@@ -732,7 +737,7 @@ def cameras():
                     LEFT JOIN clients cl ON cl.id=co.client_id
                     {where}
                     ORDER BY cl.name, co.obra, ca.code""", params)
-    filters = ["Todas", "Aguardando teste", "Testada e aprovada", "Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção"]
+    filters = ["Todas", "Aguardando teste", "Testada e aprovada", "Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Inutilizada"]
     def filter_count(label):
         if label == "Todas":
             return count("SELECT COUNT(*) FROM cameras WHERE demo=?", (current_demo_flag(),))
@@ -874,7 +879,10 @@ def camera_view(id):
         <p>{first_occ['problem'] or first_occ['notes'] or 'Sem descrição.'}</p>
         <div class='actions'><a class='btn primary' href='{url_for('occurrence_close', id=first_occ['id'])}'>Ver / resolver ocorrência</a><a class='btn' href='{url_for('occurrences', status='abertas')}'>Ver todas ocorrências</a></div>
         </div>"""
-    body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p>{f"<p><b>Última foto da instalação:</b><br><img src='{rv(c, 'last_install_photo', '')}' alt='Foto da instalação' style='max-width:320px;border-radius:14px;border:1px solid #dbe3ef;margin-top:8px'></p>" if rv(c, 'last_install_photo', '') else ''}<div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a><a class="btn" href="{url_for('camera_qr', id=c['id'])}">📷 Gerar QR</a>{('<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a>' + ('<a class=\"btn\" href=\"'+url_for('camera_receive_central', id=c['id'])+'\">🏢 Recebida na central</a>' if c['status']=='Em retorno' else '<a class=\"btn\" href=\"'+url_for('camera_authorize_removal', id=c['id'])+'\">🔓 Autorizar retirada</a>')) if current_user()['role']=='operacao' else ''}</div></div>
+    inutilizar_action = ""
+    if current_user()["role"] == "operacao" and c["status"] != "Inutilizada":
+        inutilizar_action = f"<a class='btn danger' href='{url_for('camera_inutilizar', id=c['id'])}'>🚫 Inutilizar</a>"
+    body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p>{f"<p><b>Última foto da instalação:</b><br><img src='{rv(c, 'last_install_photo', '')}' alt='Foto da instalação' style='max-width:320px;border-radius:14px;border:1px solid #dbe3ef;margin-top:8px'></p>" if rv(c, 'last_install_photo', '') else ''}<div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a><a class="btn" href="{url_for('camera_qr', id=c['id'])}">📷 Gerar QR</a><a class="btn" href="{url_for('camera_dossie', id=c['id'])}">📑 Dossiê</a>{inutilizar_action}{('<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a>' + ('<a class=\"btn\" href=\"'+url_for('camera_receive_central', id=c['id'])+'\">🏢 Recebida na central</a>' if c['status']=='Em retorno' else '<a class=\"btn\" href=\"'+url_for('camera_authorize_removal', id=c['id'])+'\">🔓 Autorizar retirada</a>')) if current_user()['role']=='operacao' else ''}</div></div>
     {active_occ_callout}
     <div class="panel"><h2>Histórico</h2>{hist_html or '<p>Sem histórico.</p>'}</div>
     <div class="panel"><h2>Ocorrências do ciclo atual</h2>{occ_html or '<p>Sem ocorrências ativas neste ciclo.</p>'}</div>
@@ -882,6 +890,155 @@ def camera_view(id):
     return page(body, breadcrumb=f"Dashboard > Câmeras > {c['code']}")
 
 
+
+@app.route("/cameras/<int:id>/dossie")
+@login_required
+def camera_dossie(id):
+    c = one("""SELECT ca.*, co.obra, co.city, co.state, cl.name client_name
+               FROM cameras ca
+               LEFT JOIN contracts co ON co.id=ca.contract_id
+               LEFT JOIN clients cl ON cl.id=co.client_id
+               WHERE ca.id=?""", (id,))
+    if not c:
+        flash("Câmera não encontrada.")
+        return redirect(url_for("cameras"))
+
+    hist = query("""SELECT h.*, oc.obra old_obra, nc.obra new_obra, ocl.name old_client, ncl.name new_client
+                    FROM camera_history h
+                    LEFT JOIN contracts oc ON oc.id=h.old_contract_id
+                    LEFT JOIN clients ocl ON ocl.id=oc.client_id
+                    LEFT JOIN contracts nc ON nc.id=h.new_contract_id
+                    LEFT JOIN clients ncl ON ncl.id=nc.client_id
+                    WHERE h.camera_id=?
+                    ORDER BY h.created_at ASC""", (id,))
+    occs = query("""SELECT o.*, co.obra, cl.name client_name
+                    FROM occurrences o
+                    LEFT JOIN contracts co ON co.id=COALESCE(o.archived_contract_id, (SELECT contract_id FROM cameras WHERE id=o.camera_id))
+                    LEFT JOIN clients cl ON cl.id=co.client_id
+                    WHERE o.camera_id=?
+                    ORDER BY o.created_at ASC""", (id,))
+
+    total_hist = len(hist)
+    obras_ids = set()
+    for h in hist:
+        if rv(h, 'old_contract_id'):
+            obras_ids.add(rv(h, 'old_contract_id'))
+        if rv(h, 'new_contract_id'):
+            obras_ids.add(rv(h, 'new_contract_id'))
+    obras_count = len(obras_ids)
+    occ_count = len(occs)
+    manut_count = sum(1 for h in hist if 'manutenção' in (rv(h, 'new_status', '') or '').lower() or 'manutenção' in (rv(h, 'note', '') or '').lower())
+    fotos_count = sum(1 for h in hist if rv(h, 'install_photo')) + (1 if rv(c, 'last_install_photo') else 0)
+
+    first_date = (rv(hist[0], 'created_at') if hist else rv(c, 'created_at')) or ''
+    last_date = (rv(hist[-1], 'created_at') if hist else rv(c, 'updated_at')) or ''
+    timeline = ""
+    for h in hist:
+        created = (rv(h, 'created_at') or '')[:16].replace('T',' ')
+        old_st = rv(h, 'old_status', '-') or '-'
+        new_st = rv(h, 'new_status', '-') or '-'
+        user = rv(h, 'user_name', '') or ''
+        note = rv(h, 'note', '') or ''
+        new_client = rv(h, 'new_client') or rv(h, 'old_client') or ''
+        new_obra = rv(h, 'new_obra') or rv(h, 'old_obra') or ''
+        contexto = (new_client + (' · ' if new_client and new_obra else '') + new_obra) or 'Registro patrimonial'
+        foto = rv(h, 'install_photo', '')
+        foto_html = f"<br><img src='{foto}' alt='Foto da instalação' style='max-width:240px;border-radius:14px;border:1px solid var(--border);margin-top:10px'>" if foto else ""
+        timeline += f"""<div class='timeline-item'><span class='tag'>{created}</span><span class='dot'>📷</span><div><b>{old_st} → {new_st}</b><div class='tag'>{contexto}</div><div class='tag'>{note}</div>{foto_html}</div><span class='badge {status_class(new_st)}'>{user}</span></div>"""
+    if not timeline:
+        timeline = "<p class='tag'>Nenhuma movimentação registrada ainda.</p>"
+
+    # Agrupamento simples por obra/contrato com base no histórico e ocorrências
+    obras = {}
+    for h in hist:
+        cid = rv(h, 'new_contract_id') or rv(h, 'old_contract_id') or 'sem'
+        label = ((rv(h, 'new_client') or rv(h, 'old_client') or 'Sem cliente') + ' · ' + (rv(h, 'new_obra') or rv(h, 'old_obra') or 'Sem obra')).strip(' ·')
+        obras.setdefault(cid, {'label': label, 'hist': [], 'occs': []})['hist'].append(h)
+    for o in occs:
+        cid = rv(o, 'archived_contract_id') or 'atual'
+        label = ((rv(o, 'client_name') or rv(c, 'client_name') or 'Sem cliente') + ' · ' + (rv(o, 'obra') or rv(c, 'obra') or 'Sem obra')).strip(' ·')
+        obras.setdefault(cid, {'label': label, 'hist': [], 'occs': []})['occs'].append(o)
+    obras_html = ""
+    for data in obras.values():
+        hlist = data['hist']
+        olist = data['occs']
+        inicio = (rv(hlist[0], 'created_at') if hlist else (rv(olist[0], 'created_at') if olist else ''))[:10]
+        fim = (rv(hlist[-1], 'created_at') if hlist else (rv(olist[-1], 'closed_at') or rv(olist[-1], 'created_at') if olist else ''))[:10]
+        obras_html += f"""<details class='card'><summary style='cursor:pointer;font-weight:800'>🏗 {data['label']} <span class='badge muted'>{len(hlist)} movimento(s)</span> <span class='badge {'danger' if any(rv(o,'status') in ('Aberta','Em andamento') for o in olist) else 'ok'}'>{len(olist)} ocorrência(s)</span></summary><div style='margin-top:12px'><p class='tag'>Período: {inicio or '-'} até {fim or '-'}</p>"""
+        for o in olist:
+            obras_html += f"""<div class='row'><b>{rv(o,'title','Ocorrência')}</b><span>{rv(o,'problem','')}</span><span><span class='badge {status_class(rv(o,'status',''))}'>{rv(o,'status','')}</span></span><span>{(rv(o,'created_at','') or '')[:16].replace('T',' ')}</span><span><a class='btn small' href='{url_for('occurrence_close', id=rv(o,'id'))}'>Ver</a></span></div>"""
+        obras_html += "</div></details>"
+    if not obras_html:
+        obras_html = "<p class='tag'>Sem ciclos anteriores registrados.</p>"
+
+    occ_html = ""
+    for o in occs:
+        occ_html += f"""<div class='row'><b>{rv(o,'title','Ocorrência')}</b><span>{rv(o,'problem','')}</span><span><span class='badge {status_class(rv(o,'status',''))}'>{rv(o,'status','')}</span></span><span>{(rv(o,'created_at','') or '')[:16].replace('T',' ')}</span><span><a class='btn small' href='{url_for('occurrence_close', id=rv(o,'id'))}'>Ver detalhe</a></span></div>"""
+    if not occ_html:
+        occ_html = "<p class='tag'>Nenhuma ocorrência registrada nesta câmera.</p>"
+
+    fotos_html = ""
+    if rv(c, 'last_install_photo'):
+        fotos_html += f"<div class='card'><b>Última instalação</b><br><img src='{rv(c,'last_install_photo')}' style='max-width:260px;border-radius:14px;border:1px solid var(--border);margin-top:10px'></div>"
+    for h in hist:
+        if rv(h, 'install_photo'):
+            fotos_html += f"<div class='card'><b>{(rv(h,'created_at','') or '')[:16].replace('T',' ')}</b><br><span class='tag'>{rv(h,'note','Foto de instalação')}</span><br><img src='{rv(h,'install_photo')}' style='max-width:260px;border-radius:14px;border:1px solid var(--border);margin-top:10px'></div>"
+    if not fotos_html:
+        fotos_html = "<p class='tag'>Nenhuma foto anexada ao dossiê.</p>"
+
+    inutilizada_callout = ""
+    if rv(c, 'status') == 'Inutilizada':
+        inutilizada_callout = f"""<div class='panel' style='border-color:rgba(239,68,68,.45)'><h2>🚫 Câmera inutilizada</h2><p>{rv(c,'notes','Sem motivo informado.')}</p></div>"""
+
+    body = f"""
+    <div class='panel'>
+      <div class='actions'><div style='flex:1'><h2>📑 Dossiê da Câmera</h2><p class='tag'>Prontuário completo de vida útil, movimentações, obras, ocorrências e fotos.</p></div><a class='btn' href='{url_for('camera_view', id=id)}'>Voltar à ficha</a><a class='btn' href='{url_for('cameras')}'>Câmeras</a></div>
+      <div class='mini-grid'>
+        <div class='card hero-card'><div class='hero-icon'>📷</div><div><h3>Câmera</h3><b style='font-size:26px'>{rv(c,'code')}</b><br><span>{rv(c,'model','')}</span></div></div>
+        <div class='card hero-card green'><div class='hero-icon'>🏗</div><div><h3>Obras atendidas</h3><b>{obras_count}</b><br><span>ciclos registrados</span></div></div>
+        <div class='card hero-card orange'><div class='hero-icon'>⚠</div><div><h3>Ocorrências</h3><b>{occ_count}</b><br><span>ativas e arquivadas</span></div></div>
+        <div class='card hero-card'><div class='hero-icon'>🖼</div><div><h3>Fotos</h3><b>{fotos_count}</b><br><span>instalações/anexos</span></div></div>
+      </div>
+      <p><span class='badge {status_class(rv(c,'status'))}'>{rv(c,'status','Sem status')}</span> · Cliente/Obra atual: {rv(c,'client_name','-') or '-'} / {rv(c,'obra','-') or '-'}</p>
+      <p class='tag'>Primeiro registro: {first_date[:16].replace('T',' ') if first_date else '-'} · Último registro: {last_date[:16].replace('T',' ') if last_date else '-'}</p>
+    </div>
+    {inutilizada_callout}
+    <div class='panel'><h2>Linha do tempo completa</h2><div class='timeline'>{timeline}</div></div>
+    <div class='panel'><h2>Obras e ciclos operacionais</h2>{obras_html}</div>
+    <div class='panel'><h2>Ocorrências da câmera</h2>{occ_html}</div>
+    <div class='panel'><h2>Fotos anexadas</h2><div class='grid'>{fotos_html}</div></div>
+    """
+    return page(body, breadcrumb=f"Dashboard > Câmeras > Dossiê {rv(c,'code','')}")
+
+
+
+@app.route("/cameras/<int:id>/inutilizar", methods=["GET", "POST"])
+@operacao_required
+def camera_inutilizar(id):
+    c = one("""SELECT ca.*, co.obra, cl.name client_name FROM cameras ca
+               LEFT JOIN contracts co ON co.id=ca.contract_id
+               LEFT JOIN clients cl ON cl.id=co.client_id
+               WHERE ca.id=?""", (id,))
+    if not c:
+        flash("Câmera não encontrada.")
+        return redirect(url_for("cameras"))
+    if request.method == "POST":
+        motivo = request.form.get("motivo", "").strip()
+        old_status = c["status"]
+        now = datetime.now().isoformat()
+        note = "Câmera inutilizada/baixada do patrimônio." + ((" Motivo: " + motivo) if motivo else "")
+        execute("UPDATE cameras SET status=?, patrimonial_status=?, notes=?, updated_at=? WHERE id=?", ("Inutilizada", "Inutilizada", ((c["notes"] or "") + "\n" + note).strip(), now, id))
+        execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_service,new_service,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (id, c["contract_id"], c["contract_id"], c["current_location"], c["current_location"], c["service"], c["service"], old_status, "Inutilizada", note, current_user()["name"], now))
+        flash("Câmera marcada como inutilizada. O histórico foi preservado.")
+        return redirect(url_for("camera_view", id=id))
+    body = f"""<div class='panel'><h2>🚫 Inutilizar câmera {c['code']}</h2>
+    <p class='tag'>Use esta opção quando a câmera estiver quebrada, sem conserto ou não puder mais ser usada em contratos.</p><p><a class='btn' href='{url_for('camera_dossie', id=id)}'>📑 Ver dossiê completo antes de inutilizar</a></p>
+    <div class='card'><p><b>Câmera:</b> {c['code']}</p><p><b>Cliente/Obra atual:</b> {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p><b>Status atual:</b> {c['status']}</p></div>
+    <form method='post' class='formgrid' onsubmit="return confirm('Confirmar que esta câmera será marcada como inutilizada?')">
+      <label class='full'>Motivo / observação<textarea name='motivo' required placeholder='Ex.: dano físico sem reparo, entrada de água, placa queimada, perda total...'></textarea></label>
+      <div class='full actions'><button class='danger'>Marcar como inutilizada</button><a class='btn' href='{url_for('camera_view', id=id)}'>Cancelar</a></div>
+    </form></div>"""
+    return page(body, breadcrumb=f"Dashboard > Câmeras > Inutilizar {c['code']}")
 
 @app.route("/cameras/<int:id>/authorize-removal", methods=["GET", "POST"])
 @operacao_required

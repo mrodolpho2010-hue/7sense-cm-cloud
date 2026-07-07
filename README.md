@@ -1,11 +1,24 @@
-# 7Sense CM Cloud v3.0.8
+# 7Sense Operations Manager - v3.1.0
 
-Correções de agenda integrada:
+## Dossiê da Câmera
 
-- Dashboard agora mostra **Próximos agendamentos** em vez de apenas agenda do dia.
-- Clique no card do Dashboard abre a lista de próximos agendamentos.
-- Tela de Agenda agora possui filtros: **Próximos**, **Hoje** e **Todos**.
-- Novo agendamento volta automaticamente para a lista de próximos agendamentos.
-- Formulário de agendamento usa seletor de calendário e horário do navegador.
+Esta versão adiciona o módulo de Dossiê da Câmera, mantendo a lógica operacional atual.
 
-Mantém todas as regras operacionais anteriores.
+### Incluído
+
+- Botão **📑 Dossiê** na lista de câmeras.
+- Botão **📑 Dossiê** na ficha da câmera.
+- Página completa do prontuário da câmera.
+- Linha do tempo completa de movimentações.
+- Histórico por obra/ciclo operacional.
+- Ocorrências ativas e arquivadas vinculadas à câmera.
+- Fotos de instalação/anexos no dossiê.
+- Dossiê disponível também para câmeras inutilizadas.
+- Histórico de vida preservado mesmo quando o ciclo atual é zerado.
+
+### Atualização
+
+1. Copie todos os arquivos desta pasta para o repositório `7sense-cm-cloud`.
+2. Commit: `v3.1.0 dossie da camera`.
+3. Push origin.
+4. Render: Manual Deploy > Clear build cache & deploy.
