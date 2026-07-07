@@ -1,12 +1,18 @@
-# 7Sense CM Cloud v3.0.3
+# 7Sense Operations Manager v3.0.4
 
-Validação de obra no campo.
+Correção de ocorrências no fluxo de campo.
 
 ## Alterações
-- Links de campo por obra agora validam a câmera antes de liberar ações.
-- Câmeras livres não são mais vinculadas automaticamente pelo celular.
-- Para operar pelo link de uma obra, a câmera precisa estar previamente vinculada/reservada para esse contrato no painel.
-- Câmeras vinculadas a outra obra são bloqueadas no campo para evitar erro operacional.
+
+- Ocorrências registradas pelo 7Sense Campo aparecem com destaque na aba Câmeras.
+- Câmeras com ocorrência aberta exibem badge de atenção.
+- O fluxo de campo fica bloqueado enquanto houver ocorrência aberta.
+- Para continuar a instalação/ativação, a ocorrência precisa ser resolvida/fechada no painel.
+- O botão Registrar problema permanece disponível para abrir novo registro, se necessário.
 
 ## Deploy
-Commit sugerido: `v3.0.3 validacao obra campo`
+
+1. Copie os arquivos para a pasta GitHub `7sense-cm-cloud`.
+2. Commit: `v3.0.4 ocorrencias bloqueiam campo`
+3. Push origin.
+4. Render: Manual Deploy > Clear build cache & deploy.
