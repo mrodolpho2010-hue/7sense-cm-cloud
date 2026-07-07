@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.0.5 Detalhe e solução de ocorrências"
+APP_VERSION = "3.0.6 Links diretos para ocorrências"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -674,7 +674,8 @@ def contract_form(r=None):
 def contract_view(id):
     r = one("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.id=?", (id,))
     cams = query("""SELECT ca.*, co.obra, cl.name client_name,
-                    (SELECT COUNT(*) FROM occurrences o WHERE o.camera_id=ca.id AND o.archived_at IS NULL AND o.status IN ('Aberta','Em andamento')) AS active_occ_count
+                    (SELECT COUNT(*) FROM occurrences o WHERE o.camera_id=ca.id AND o.archived_at IS NULL AND o.status IN ('Aberta','Em andamento')) AS active_occ_count,
+                    (SELECT o.id FROM occurrences o WHERE o.camera_id=ca.id AND o.archived_at IS NULL AND o.status IN ('Aberta','Em andamento') ORDER BY o.created_at DESC LIMIT 1) AS active_occ_id
                     FROM cameras ca
                     LEFT JOIN contracts co ON co.id=ca.contract_id
                     LEFT JOIN clients cl ON cl.id=co.client_id
@@ -696,7 +697,13 @@ def camera_row(c, user_role=None):
     if active_occ > 0:
         cls = 'danger'
     aprovado = " 🧪" if (rv(c, 'tested_approved_at') or status == "Testada e aprovada") else ""
-    occ_badge = f" <span class='badge danger'>⚠ {active_occ} ocorrência(s)</span>" if active_occ else ""
+    active_occ_id = rv(c, 'active_occ_id', None)
+    if active_occ and active_occ_id:
+        occ_badge = f" <a class='badge danger' href='{url_for('occurrence_close', id=active_occ_id)}'>⚠ {active_occ} ocorrência(s) aberta(s)</a>"
+    elif active_occ:
+        occ_badge = f" <a class='badge danger' href='{url_for('occurrences', status='abertas')}'>⚠ {active_occ} ocorrência(s) aberta(s)</a>"
+    else:
+        occ_badge = ""
     qr_btn = f"<a class='btn small' href='{url_for('camera_qr', id=cam_id)}'>📷 QR</a>"
     test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=cam_id)}'>🧪 Teste</a>" if (user_role or (current_user()['role'] if current_user() else None))=='operacao' else ""
     edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=cam_id)}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=cam_id)}'>Transferir</a>") if (user_role or (current_user()['role'] if current_user() else None))=='operacao' else ""
@@ -704,7 +711,8 @@ def camera_row(c, user_role=None):
     obra = rv(c, 'obra', '-') or '-'
     local = rv(c, 'current_location', '-') or '-'
     servico = rv(c, 'service', '-') or '-'
-    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{code}{aprovado}</b><span><b>{cliente}</b><br><small>{obra}</small></span><span>{local}</span><span>{servico}</span><span><span class='badge {cls}'>{status}</span>{occ_badge}</span><span class='actions'>{qr_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=cam_id)}'>Ver</a>{edit_btns}</span></div>"
+    ver_label = 'Ver / ocorrência' if active_occ else 'Ver'
+    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{code}{aprovado}</b><span><b>{cliente}</b><br><small>{obra}</small></span><span>{local}</span><span>{servico}</span><span><span class='badge {cls}'>{status}</span>{occ_badge}</span><span class='actions'>{qr_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=cam_id)}'>{ver_label}</a>{edit_btns}</span></div>"
 
 
 @app.route("/cameras")
@@ -716,7 +724,8 @@ def cameras():
     if status != "Todas":
         where += " AND ca.status=?"; params = (current_demo_flag(), status)
     rows = query(f"""SELECT ca.*, co.obra, co.city contract_city, co.state contract_state, cl.name client_name,
-                    (SELECT COUNT(*) FROM occurrences o WHERE o.camera_id=ca.id AND o.archived_at IS NULL AND o.status IN ('Aberta','Em andamento')) AS active_occ_count
+                    (SELECT COUNT(*) FROM occurrences o WHERE o.camera_id=ca.id AND o.archived_at IS NULL AND o.status IN ('Aberta','Em andamento')) AS active_occ_count,
+                    (SELECT o.id FROM occurrences o WHERE o.camera_id=ca.id AND o.archived_at IS NULL AND o.status IN ('Aberta','Em andamento') ORDER BY o.created_at DESC LIMIT 1) AS active_occ_id
                     FROM cameras ca
                     LEFT JOIN contracts co ON co.id=ca.contract_id
                     LEFT JOIN clients cl ON cl.id=co.client_id
@@ -853,9 +862,19 @@ def camera_view(id):
         foto_html = f"<br><img src='{foto}' alt='Foto da instalação' style='max-width:220px;border-radius:12px;border:1px solid #dbe3ef;margin-top:8px'>" if foto else ""
         hist_parts.append(f"<div class='row'><b>{h['created_at'][:16]}</b><span>{h['old_status'] or '-'} → {h['new_status'] or '-'}</span><span>{h['old_location'] or '-'} → {h['new_location'] or '-'}</span><span>{h['user_name'] or ''}</span><span>{h['note'] or ''}{foto_html}</span></div>")
     hist_html = "".join(hist_parts)
-    occ_html = "".join([f"<div class='row'><b>{o['title']}</b><span>{o['problem']}</span><span>{o['status']}</span><span>{o['created_at'][:16]}</span><span></span></div>" for o in occs])
+    occ_html = "".join([f"<div class='row'><b>{o['title']}</b><span>{o['problem']}</span><span><span class='badge danger'>{o['status']}</span></span><span>{o['created_at'][:16]}</span><span><a class='btn small primary' href='{url_for('occurrence_close', id=o['id'])}'>Ver / resolver</a></span></div>" for o in occs])
     occ_hist_html = "".join([f"<div class='row'><b>{o['title']}</b><span>{o['problem']}</span><span>Arquivada</span><span>{(o['archived_at'] or o['created_at'])[:16]}</span><span>{o['archived_location'] or '-'}</span></div>" for o in occs_hist])
+    active_occ_callout = ""
+    if occs:
+        first_occ = occs[0]
+        active_occ_callout = f"""<div class='panel' style='border-color:rgba(239,68,68,.45)'>
+        <h2>⚠ Ocorrência aberta nesta câmera</h2>
+        <p><b>{first_occ['title'] or 'Problema operacional'}</b></p>
+        <p>{first_occ['problem'] or first_occ['notes'] or 'Sem descrição.'}</p>
+        <div class='actions'><a class='btn primary' href='{url_for('occurrence_close', id=first_occ['id'])}'>Ver / resolver ocorrência</a><a class='btn' href='{url_for('occurrences', status='abertas')}'>Ver todas ocorrências</a></div>
+        </div>"""
     body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p>{f"<p><b>Última foto da instalação:</b><br><img src='{rv(c, 'last_install_photo', '')}' alt='Foto da instalação' style='max-width:320px;border-radius:14px;border:1px solid #dbe3ef;margin-top:8px'></p>" if rv(c, 'last_install_photo', '') else ''}<div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a><a class="btn" href="{url_for('camera_qr', id=c['id'])}">📷 Gerar QR</a>{('<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a>' + ('<a class=\"btn\" href=\"'+url_for('camera_receive_central', id=c['id'])+'\">🏢 Recebida na central</a>' if c['status']=='Em retorno' else '<a class=\"btn\" href=\"'+url_for('camera_authorize_removal', id=c['id'])+'\">🔓 Autorizar retirada</a>')) if current_user()['role']=='operacao' else ''}</div></div>
+    {active_occ_callout}
     <div class="panel"><h2>Histórico</h2>{hist_html or '<p>Sem histórico.</p>'}</div>
     <div class="panel"><h2>Ocorrências do ciclo atual</h2>{occ_html or '<p>Sem ocorrências ativas neste ciclo.</p>'}</div>
     <div class="panel"><h2>Ocorrências arquivadas de ciclos anteriores</h2>{occ_hist_html or '<p>Sem ocorrências arquivadas.</p>'}</div>"""
@@ -1227,7 +1246,8 @@ def campo_core(contract_id=None):
 
     def load_camera_by_code(camera_code):
         return one("""SELECT ca.*, co.obra, cl.name client_name,
-                    (SELECT COUNT(*) FROM occurrences o WHERE o.camera_id=ca.id AND o.archived_at IS NULL AND o.status IN ('Aberta','Em andamento')) AS active_occ_count
+                    (SELECT COUNT(*) FROM occurrences o WHERE o.camera_id=ca.id AND o.archived_at IS NULL AND o.status IN ('Aberta','Em andamento')) AS active_occ_count,
+                    (SELECT o.id FROM occurrences o WHERE o.camera_id=ca.id AND o.archived_at IS NULL AND o.status IN ('Aberta','Em andamento') ORDER BY o.created_at DESC LIMIT 1) AS active_occ_id
                     FROM cameras ca
                     LEFT JOIN contracts co ON co.id=ca.contract_id
                     LEFT JOIN clients cl ON cl.id=co.client_id
