@@ -1,18 +1,24 @@
-# 7Sense Operations Manager v3.0.4
+# 7Sense Operations Manager v3.0.5
 
-Correção de ocorrências no fluxo de campo.
+## Correção
 
-## Alterações
+- Ocorrências agora abrem uma tela de detalhe antes de serem solucionadas.
+- O botão **Ver / resolver** mostra:
+  - câmera;
+  - cliente;
+  - obra;
+  - local;
+  - problema registrado;
+  - observações;
+  - responsável;
+  - data de abertura.
+- Só depois disso é possível clicar em **Marcar como solucionada**.
+- Campo para registrar o que foi feito para corrigir o problema.
+- Enquanto a ocorrência estiver aberta, o fluxo de campo continua bloqueado.
 
-- Ocorrências registradas pelo 7Sense Campo aparecem com destaque na aba Câmeras.
-- Câmeras com ocorrência aberta exibem badge de atenção.
-- O fluxo de campo fica bloqueado enquanto houver ocorrência aberta.
-- Para continuar a instalação/ativação, a ocorrência precisa ser resolvida/fechada no painel.
-- O botão Registrar problema permanece disponível para abrir novo registro, se necessário.
+## Atualização
 
-## Deploy
-
-1. Copie os arquivos para a pasta GitHub `7sense-cm-cloud`.
-2. Commit: `v3.0.4 ocorrencias bloqueiam campo`
+1. Copie os arquivos desta pasta para o repositório `7sense-cm-cloud`.
+2. Faça commit: `v3.0.5 detalhe ocorrencias`
 3. Push origin.
-4. Render: Manual Deploy > Clear build cache & deploy.
+4. No Render: Manual Deploy > Clear build cache & deploy.

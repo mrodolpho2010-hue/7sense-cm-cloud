@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.0.4 Ocorrências bloqueiam fluxo de campo"
+APP_VERSION = "3.0.5 Detalhe e solução de ocorrências"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -164,6 +164,8 @@ def init_db():
         "archived_at TEXT",
         "archived_contract_id INTEGER",
         "archived_location TEXT",
+        "resolution_notes TEXT",
+        "resolved_by TEXT",
     ]:
         try:
             execute(f"ALTER TABLE occurrences ADD COLUMN {col}")
@@ -1039,9 +1041,21 @@ def occurrences():
         where = "WHERE o.archived_at IS NOT NULL AND o.demo=?"
     else:
         where = "WHERE o.archived_at IS NULL AND o.demo=?"
-    rows = query(f"SELECT o.*, ca.code camera_code FROM occurrences o LEFT JOIN cameras ca ON ca.id=o.camera_id {where} ORDER BY o.created_at DESC", (current_demo_flag(),))
+    rows = query(f"""SELECT o.*, ca.code camera_code, ca.current_location, co.obra, cl.name client_name
+                     FROM occurrences o
+                     LEFT JOIN cameras ca ON ca.id=o.camera_id
+                     LEFT JOIN contracts co ON co.id=ca.contract_id
+                     LEFT JOIN clients cl ON cl.id=co.client_id
+                     {where}
+                     ORDER BY o.created_at DESC""", (current_demo_flag(),))
     can_edit = current_user()["role"] == "operacao"
-    items = "".join([f"<div class='row'><b>{r['camera_code'] or '-'}</b><span>{r['title']}</span><span>{r['status']}</span><span>{r['created_at'][:16]}</span><span>{'<a class=\"btn small\" href=\"'+url_for('occurrence_close', id=r['id'])+'\">Resolver</a>' if can_edit and r['status']!='Resolvida' else ''}</span></div>" for r in rows])
+    items = "".join([f"""<div class='row'>
+        <b>{r['camera_code'] or '-'}</b>
+        <span>{r['title']}</span>
+        <span>{r['status']}</span>
+        <span>{(r['created_at'] or '')[:16]}</span>
+        <span><a class='btn small' href='{url_for('occurrence_close', id=r['id'])}'>{'Ver / resolver' if can_edit and r['status']!='Resolvida' else 'Ver detalhe'}</a></span>
+    </div>""" for r in rows])
     body = f"<div class='panel'><div class='actions'><h2 style='flex:1'>Ocorrências</h2>{'<a class=\"btn primary\" href=\"'+url_for('occurrence_new')+'\">Nova ocorrência</a>' if can_edit else ''}</div>{items or '<p>Nenhuma ocorrência.</p>'}</div>"
     return page(body, breadcrumb="Dashboard > Ocorrências")
 
@@ -1060,12 +1074,47 @@ def occurrence_new():
     return page(body, breadcrumb="Dashboard > Ocorrências > Nova")
 
 
-@app.route("/occurrences/<int:id>/close")
+@app.route("/occurrences/<int:id>/close", methods=["GET", "POST"])
 @operacao_required
 def occurrence_close(id):
-    execute("UPDATE occurrences SET status='Resolvida', closed_at=? WHERE id=?", (datetime.now().isoformat(), id))
-    flash("Ocorrência resolvida.")
-    return redirect(url_for("occurrences"))
+    r = one("""SELECT o.*, ca.code camera_code, ca.current_location, co.obra, cl.name client_name
+               FROM occurrences o
+               LEFT JOIN cameras ca ON ca.id=o.camera_id
+               LEFT JOIN contracts co ON co.id=ca.contract_id
+               LEFT JOIN clients cl ON cl.id=co.client_id
+               WHERE o.id=?""", (id,))
+    if not r:
+        flash("Ocorrência não encontrada.")
+        return redirect(url_for("occurrences"))
+    if request.method == "POST":
+        resolution_notes = request.form.get("resolution_notes", "").strip()
+        execute("UPDATE occurrences SET status='Resolvida', closed_at=?, resolution_notes=?, resolved_by=? WHERE id=?", (datetime.now().isoformat(), resolution_notes, current_user()["name"], id))
+        flash("Ocorrência marcada como solucionada.")
+        return redirect(url_for("occurrences"))
+
+    detalhes = f"""
+    <div class='panel'>
+      <h2>Detalhe da ocorrência</h2>
+      <p><span class='badge danger'>{r['status']}</span></p>
+      <div class='grid'>
+        <div><b>Câmera</b><br>{r['camera_code'] or '-'}</div>
+        <div><b>Cliente</b><br>{r['client_name'] or '-'}</div>
+        <div><b>Obra</b><br>{r['obra'] or '-'}</div>
+        <div><b>Local</b><br>{r['current_location'] or '-'}</div>
+      </div>
+      <hr style='border:0;border-top:1px solid #22314f;margin:18px 0'>
+      <p><b>Título:</b><br>{r['title'] or '-'}</p>
+      <p><b>Problema registrado:</b><br>{r['problem'] or '-'}</p>
+      <p><b>Observações:</b><br>{r['notes'] or '-'}</p>
+      <p><b>Responsável:</b><br>{r['responsible'] or '-'}</p>
+      <p><b>Data de abertura:</b><br>{(r['created_at'] or '')[:16]}</p>
+    </div>
+    """
+    if r['status'] == 'Resolvida':
+        acao = f"""<div class='panel'><h2>Ocorrência solucionada</h2><p><b>Solucionado por:</b> {rv(r, 'resolved_by', '-') or '-'}</p><p><b>Data:</b> {(rv(r, 'closed_at', '') or '')[:16]}</p><p><b>Solução aplicada:</b><br>{rv(r, 'resolution_notes', '-') or '-'}</p><a class='btn' href='{url_for('occurrences')}'>Voltar</a></div>"""
+    else:
+        acao = f"""<div class='panel'><h2>Resolver ocorrência</h2><p class='tag'>Confira o problema antes de marcar como solucionado. Enquanto a ocorrência estiver aberta, o fluxo de campo da câmera fica bloqueado.</p><form method='post' class='formgrid'><label class='full'>O que foi feito para corrigir?<textarea name='resolution_notes' placeholder='Ex.: Conector substituído, câmera religada, suporte ajustado...'></textarea></label><div class='full actions'><a class='btn' href='{url_for('occurrences')}'>Cancelar</a><button class='primary'>✅ Marcar como solucionada</button></div></form></div>"""
+    return page(detalhes + acao, breadcrumb="Dashboard > Ocorrências > Detalhe")
 
 
 @app.route("/agenda")
