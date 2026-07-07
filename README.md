@@ -1,24 +1,17 @@
-# 7Sense – Data into Action
-## Operations Manager v2.1.0 – Release estável
+# 7Sense Operations Manager v3.0.0
 
-Esta versão consolida a base operacional aprovada para uso com Render + Supabase.
+Redesign visual leve da interface, mantendo as regras da versão estável.
 
-## Inclui
-- Dashboard operacional sem pesquisa global.
-- Fluxo operacional único das câmeras.
-- Contadores por etapa.
-- Banco permanente Supabase/PostgreSQL.
-- Login limpo.
-- Modo demonstração removido da interface.
-- Configurações no lugar de Sair.
-- Retirada só após autorização no painel.
-- Câmera aguardando teste bloqueada para transporte/obra.
-- QR Code fixo por patrimônio da câmera.
-- Foto obrigatória antes da ativação.
-- Fluxo de retorno: retirada em campo → em retorno → recebida na central → aguardando teste.
+## Incluído
+- Novo tema escuro premium
+- Menu lateral fixo
+- Dashboard com aparência de Operations Center
+- Cards, badges e filtros redesenhados
+- Login com identidade visual 7Sense
+- Sem alteração na lógica operacional, banco ou rotas
 
-## Atualização
-1. Copie todos os arquivos desta pasta para a pasta GitHub `7sense-cm-cloud`.
-2. Faça commit: `v2.1.0 release estavel`.
-3. Faça Push origin.
-4. No Render, execute: Manual Deploy > Clear build cache & deploy.
+## Deploy
+1. Copiar arquivos para o repositório GitHub.
+2. Commit: `v3.0.0 redesign visual`
+3. Push origin.
+4. Render: Manual Deploy > Clear build cache & deploy.
