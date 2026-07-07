@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.0.0 Redesign visual"
+APP_VERSION = "3.0.1 Operations Center visual"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -316,13 +316,17 @@ BASE = r"""
 *{box-sizing:border-box} html,body{min-height:100%} body{margin:0;font-family:Inter,Manrope,Segoe UI,Arial,Helvetica,sans-serif;background:radial-gradient(circle at top left,rgba(31,111,255,.18),transparent 28%),linear-gradient(135deg,var(--bg),var(--bg2));color:var(--text)} a{text-decoration:none;color:inherit} small{color:var(--muted)}
 .app-shell{display:flex;min-height:100vh}.sidebar{position:fixed;left:0;top:0;bottom:0;width:245px;background:linear-gradient(180deg,rgba(7,16,29,.98),rgba(5,12,24,.98));border-right:1px solid var(--border);padding:22px 14px;display:flex;flex-direction:column;gap:18px}.logo{display:flex;align-items:center;gap:12px;padding:0 8px 16px}.logo-mark{font-size:38px;font-weight:950;line-height:1;color:#1f6fff;text-shadow:0 0 24px rgba(31,111,255,.35)}.logo-title{font-size:21px;font-weight:900}.logo-sub{font-size:12px;color:var(--muted);margin-top:2px}.nav{display:flex;flex-direction:column;gap:8px}.nav a,.settings>a{display:flex;align-items:center;gap:10px;border:1px solid transparent;background:transparent;border-radius:13px;padding:12px 13px;font-size:15px;color:#dbeafe}.nav a:hover,.settings>a:hover{background:rgba(31,111,255,.12);border-color:rgba(31,111,255,.3)}.nav a:first-child{background:linear-gradient(135deg,rgba(31,111,255,.28),rgba(31,111,255,.08));border-color:rgba(59,130,246,.55);box-shadow:inset 0 0 18px rgba(31,111,255,.12)}.side-footer{margin-top:auto;background:rgba(15,27,45,.8);border:1px solid var(--border);border-radius:16px;padding:14px}.avatar{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#0ea5e9);display:inline-flex;align-items:center;justify-content:center;font-weight:800;margin-right:10px}.version{margin-top:14px;color:var(--muted);font-size:12px;text-align:center}
 .main{margin-left:245px;width:calc(100% - 245px);padding:26px 28px 40px}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px}.brand{font-size:26px;font-weight:900;letter-spacing:-.03em}.tag{color:var(--muted);font-size:14px;line-height:1.45}.breadcrumb{font-size:13px;color:var(--muted);margin-top:6px}.top-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.pill{border:1px solid var(--border);background:rgba(15,27,45,.78);border-radius:13px;padding:10px 14px;color:#cbd5e1}.wrap{max-width:1480px;margin:0 auto}.btn,.nav a,button{border:1px solid var(--border);background:rgba(15,27,45,.88);border-radius:12px;padding:10px 14px;font-size:14px;cursor:pointer;color:var(--text)}button:hover,.btn:hover{border-color:rgba(59,130,246,.75);background:rgba(31,111,255,.12)}.btn.primary,button.primary{background:linear-gradient(135deg,var(--accent),#0ea5e9);color:white;border-color:#3384ff}.btn.danger,button.danger{background:rgba(239,68,68,.18);color:#fecaca;border-color:rgba(239,68,68,.45)}.btn.small{padding:7px 10px;font-size:13px}.grid{display:grid;grid-template-columns:repeat(5,minmax(145px,1fr));gap:14px}.card,.panel{background:linear-gradient(180deg,rgba(17,31,53,.92),rgba(12,24,42,.92));border:1px solid var(--border);border-radius:20px;box-shadow:var(--shadow)}.card{padding:18px}.panel{padding:18px;margin-top:16px}.panel h2{margin:0 0 12px;font-size:22px;letter-spacing:-.02em}.metric{display:block;position:relative;overflow:hidden;min-height:118px}.metric:before{content:"";position:absolute;right:-35px;top:-35px;width:110px;height:110px;border-radius:50%;background:rgba(31,111,255,.12)}.metric h3{margin:0 0 8px;font-size:15px;color:#dbeafe;max-width:160px}.metric b{font-size:38px;line-height:1;font-weight:900}.metric.danger{border-color:rgba(239,68,68,.5);background:linear-gradient(180deg,rgba(69,20,30,.75),rgba(22,15,28,.75))}.metric:hover{transform:translateY(-1px);border-color:rgba(59,130,246,.55);transition:.15s ease}.search{display:flex;gap:8px;flex:1;max-width:420px}input,select,textarea{width:100%;border:1px solid var(--border);border-radius:12px;padding:12px;font-size:15px;background:#0b1628;color:var(--text)}input::placeholder,textarea::placeholder{color:#64748b}textarea{min-height:92px}.row{display:grid;grid-template-columns:1.2fr 1.2fr 1fr .8fr auto;gap:10px;align-items:center;border-bottom:1px solid rgba(32,49,73,.78);padding:13px 4px}.row:last-child{border-bottom:none}.row.camera{grid-template-columns:.95fr 1.45fr 1fr 1fr 1fr 1.6fr}.row.danger{background:rgba(239,68,68,.08);color:#fecaca;border-radius:14px;padding-left:10px}.badge{display:inline-block;padding:6px 10px;border-radius:999px;font-size:12.5px;border:1px solid var(--border);background:rgba(148,163,184,.12);color:#cbd5e1}.badge.ok{background:var(--softok);color:#86efac;border-color:rgba(34,197,94,.35)}.badge.danger{background:var(--softdanger);color:#fca5a5;border-color:rgba(239,68,68,.35)}.badge.warn{background:var(--softwarn);color:#fcd34d;border-color:rgba(245,158,11,.35)}.badge.info{background:var(--softinfo);color:#93c5fd;border-color:rgba(59,130,246,.35)}.badge.muted{background:rgba(148,163,184,.12);color:#cbd5e1}.filters{display:flex;gap:8px;flex-wrap:wrap;margin:13px 0}.filters a{border:1px solid var(--border);background:rgba(15,27,45,.88);padding:9px 13px;border-radius:999px;color:#dbeafe}.filters a.active{background:linear-gradient(135deg,var(--accent),#0ea5e9);color:#fff;border-color:#3384ff}.flash{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:14px;padding:11px;margin:12px 0;color:#fde68a}.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.formgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}.full{grid-column:1/-1}.mobile-card{max-width:560px;margin:0 auto}.hero{font-size:22px;font-weight:900}.hidden{display:none!important}.settings{position:relative}.settings-menu{display:none;position:absolute;left:0;bottom:48px;background:#0b1628;border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);min-width:230px;z-index:20;padding:8px}.settings:hover .settings-menu{display:block}.settings-menu a{display:block;border:0;border-radius:10px;padding:10px 12px;background:transparent;color:#dbeafe}.settings-menu a:hover{background:rgba(31,111,255,.12)}details.card,details.panel{padding:16px}summary{list-style:none}summary::-webkit-details-marker{display:none}summary:before{content:'▾';display:inline-block;margin-right:8px;color:#93c5fd}.panel .grid .metric{min-height:112px;text-align:center}.panel .grid .metric h3{margin:auto auto 8px}.panel .grid .metric b{font-size:30px}
+
+.oc-grid{display:grid;grid-template-columns:2fr 1.15fr;gap:16px}.mini-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px}.hero-card{display:flex;align-items:center;gap:16px;min-height:124px}.hero-icon{width:64px;height:64px;border-radius:18px;display:flex;align-items:center;justify-content:center;font-size:30px;background:linear-gradient(135deg,rgba(31,111,255,.35),rgba(14,165,233,.15));box-shadow:inset 0 0 22px rgba(255,255,255,.04)}.hero-card.green .hero-icon{background:linear-gradient(135deg,rgba(34,197,94,.35),rgba(34,197,94,.08))}.hero-card.orange .hero-icon{background:linear-gradient(135deg,rgba(245,158,11,.35),rgba(245,158,11,.08))}.hero-card.red .hero-icon{background:linear-gradient(135deg,rgba(239,68,68,.35),rgba(239,68,68,.08))}.hero-card b{font-size:38px}.hero-card span{color:var(--muted);font-size:13px}.flow-board{padding:22px}.flow-line{display:grid;grid-template-columns:repeat(8,1fr);gap:14px;align-items:stretch;margin-top:18px}.flow-step{position:relative;text-align:center;border:1px solid var(--border);border-radius:18px;padding:18px 10px;background:rgba(15,27,45,.72);min-height:142px}.flow-step:after{content:'→';position:absolute;right:-13px;top:48%;color:#64748b}.flow-step:last-child:after{display:none}.flow-step .circle{margin:0 auto 10px;width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;background:rgba(31,111,255,.16);border:1px solid rgba(59,130,246,.35)}.flow-step b{display:block;font-size:28px;margin-top:8px}.flow-step small{display:block;min-height:32px}.timeline{position:relative}.timeline-item{display:grid;grid-template-columns:70px 42px 1fr auto;gap:10px;align-items:center;padding:12px 0;border-bottom:1px solid rgba(32,49,73,.7)}.timeline-item:last-child{border-bottom:none}.dot{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(59,130,246,.18)}.status-list{display:flex;flex-direction:column;gap:12px}.status-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}.bar{height:8px;background:#13243d;border-radius:999px;overflow:hidden;margin-top:6px}.bar span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#1f6fff,#22c55e)}.bottom-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:16px}.strip-card{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--border);border-radius:18px;background:rgba(15,27,45,.78)}.strip-card b{font-size:22px}.top-search input{height:46px}
+@media(max-width:1180px){.oc-grid,.mini-grid,.bottom-strip{grid-template-columns:1fr 1fr}.flow-line{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:760px){.oc-grid,.mini-grid,.bottom-strip{grid-template-columns:1fr}.flow-line{grid-template-columns:1fr}.flow-step:after{display:none}.timeline-item{grid-template-columns:50px 38px 1fr}}
 @media(max-width:980px){.sidebar{position:relative;width:100%;height:auto}.app-shell{display:block}.main{margin-left:0;width:100%;padding:18px}.nav{flex-direction:row;flex-wrap:wrap}.side-footer{display:none}.grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.grid{grid-template-columns:1fr}.row,.row.camera{display:block}.row>*{margin:6px 0}.formgrid{grid-template-columns:1fr}.top{display:block}.top-actions{margin-top:12px}.search{max-width:none;margin-top:10px}}
 </style>
 </head><body><div class="app-shell">
 <aside class="sidebar"><div class="logo"><div class="logo-mark">7</div><div><div class="logo-title">7Sense</div><div class="logo-sub">Data into Action</div></div></div>
 <nav class="nav"><a href="{{url_for('dashboard')}}">🏠 Dashboard</a><a href="{{url_for('cameras')}}">📷 Câmeras</a><a href="{{url_for('clients')}}">👥 Clientes</a><a href="{{url_for('contracts')}}">🏗 Contratos</a><a href="{{url_for('occurrences')}}">⚠️ Ocorrências</a><a href="{{url_for('agenda_page')}}">📅 Agenda</a><a href="{{url_for('campo')}}">📱 Campo</a>{% if user %}<div class="settings"><a href="{{url_for('settings_page')}}">⚙️ Configurações</a><div class="settings-menu"><a href="{{url_for('profile_page')}}">Meu perfil</a><a href="{{url_for('change_password')}}">Alterar senha</a><a href="{{url_for('users_page')}}">Gerenciar usuários</a><a href="{{url_for('clear_database')}}">Limpar banco de dados</a><a href="{{url_for('about_page')}}">Sobre o sistema</a><a href="{{url_for('logout')}}">Sair</a></div></div>{% endif %}</nav>
 {% if user %}<div class="side-footer"><span class="avatar">{{user['name'][:1]}}{{user['name'][1:2]}}</span><b>{{user['name']}}</b><div class="tag">{{user['role']}} · Online</div><div class="version">v{{version}}</div></div>{% endif %}</aside>
-<main class="main"><div class="wrap"><div class="top"><div><div class="brand">7Sense Operations Center</div><div class="tag">Gestão operacional e patrimonial de câmeras em campo</div>{% if user %}<div class="breadcrumb">{{breadcrumb or 'Dashboard'}} · Usuário: {{user['name']}} · Perfil: {{user['role']}}</div>{% endif %}</div><div class="top-actions"><div class="pill">🔒 Banco permanente</div><div class="pill">⚡ Operação</div></div></div>
+<main class="main"><div class="wrap"><div class="top"><div><div class="brand">Bom dia, {{user['name'] if user else 'Marcos'}}! 👋</div><div class="tag">Bem-vindo ao 7Sense Operations Center</div>{% if user %}<div class="breadcrumb">{{breadcrumb or 'Dashboard'}} · Perfil: {{user['role']}}</div>{% endif %}</div><div class="top-actions"><form class="search top-search" action="{{url_for('cameras')}}"><input name="q" placeholder="Buscar câmeras, obras, contratos..."></form><div class="pill">🔔 0</div><div class="pill">📅 Operação</div><div class="pill">⚙️</div></div></div>
 {% with messages = get_flashed_messages() %}{% if messages %}{% for m in messages %}<div class="flash">{{m}}</div>{% endfor %}{% endif %}{% endwith %}
 {{body|safe}}
 </div></main></div></body></html>
@@ -491,63 +495,80 @@ def dashboard():
 
     flow_items = [
         ("Aguardando teste", "🧪", "Aguardando teste"),
-        ("Prontas para envio", "✅", "Testada e aprovada"),
+        ("Testada e aprovada", "✅", "Testada e aprovada"),
         ("Em transporte", "🚚", "Em transporte"),
-        ("Na obra aguardando instalação", "📍", "Na obra aguardando instalação"),
-        ("Em operação", "🟢", "Em operação"),
-        ("Aguardando retirada", "🟡", "Aguardando retirada"),
+        ("Na obra", "🏗️", "Na obra aguardando instalação"),
+        ("Em operação", "📡", "Em operação"),
+        ("Aguardando retirada", "⏬", "Aguardando retirada"),
         ("Em retorno", "↩️", "Em retorno"),
         ("Em manutenção", "🔧", "Em manutenção"),
-        ("Offline", "🔴", "Offline"),
     ]
     flow_cards = ""
+    flow_counts = []
     for label, icon, status_value in flow_items:
         n = count("SELECT COUNT(*) FROM cameras WHERE status=? AND demo=?", (status_value, df))
-        danger = " danger" if status_value in ("Offline", "Em manutenção") and n else ""
-        flow_cards += f"<a class='card metric{danger}' href='{url_for('cameras', status=status_value)}'><h3>{icon} {label}</h3><b>{n}</b></a>"
+        flow_counts.append((label, n, status_value))
+        flow_cards += f"""<a class='flow-step' href='{url_for('cameras', status=status_value)}'><div class='circle'>{icon}</div><small>{label}</small><b>{n}</b></a>"""
 
     hist = query("""SELECT h.*, c.code camera_code, cl.name client_name, co.obra obra
                     FROM camera_history h
                     LEFT JOIN cameras c ON c.id=h.camera_id
                     LEFT JOIN contracts co ON co.id=COALESCE(h.new_contract_id, c.contract_id)
                     LEFT JOIN clients cl ON cl.id=co.client_id
-                    ORDER BY h.created_at DESC LIMIT 8""")
+                    ORDER BY h.created_at DESC LIMIT 5""")
     moves = ""
     for h in hist:
-        when = (rv(h, 'created_at') or '')[:16].replace('T', ' ')
+        when = (rv(h, 'created_at') or '')[11:16] or '--:--'
         cam = rv(h, 'camera_code', 'Câmera') or 'Câmera'
-        st = rv(h, 'new_status', '') or ''
+        st = rv(h, 'new_status', '') or 'Movimentação'
         obra = rv(h, 'obra', '') or ''
         cliente = rv(h, 'client_name', '') or ''
-        note = rv(h, 'note', '') or ''
-        context = f" · {cliente} / {obra}" if (cliente or obra) else ""
-        moves += f"<div class='row'><b>{when}</b><span>{cam}</span><span>{st}{context}</span><span>{note}</span><span></span></div>"
+        context = f"{cliente} · {obra}" if (cliente or obra) else "Registro operacional"
+        moves += f"""<div class='timeline-item'><span class='tag'>{when}</span><span class='dot'>📷</span><div><b>{cam} - {st}</b><div class='tag'>{context}</div></div><span class='badge info'>{st[:16]}</span></div>"""
     if not moves:
         moves = "<p class='tag'>Nenhuma movimentação registrada ainda.</p>"
 
+    # próximas ações simples, com base em status que precisam de atuação humana
+    action_rows = []
+    for label, status_value, icon in [("Testar câmeras", "Aguardando teste", "🧪"), ("Enviar para obra", "Testada e aprovada", "🚚"), ("Instalação pendente", "Na obra aguardando instalação", "🏗️"), ("Retirada autorizada", "Aguardando retirada", "↩️")]:
+        n = count("SELECT COUNT(*) FROM cameras WHERE status=? AND demo=?", (status_value, df))
+        if n:
+            action_rows.append(f"""<a class='timeline-item' href='{url_for('cameras', status=status_value)}'><span class='dot'>{icon}</span><div style='grid-column:span 2'><b>{label}</b><div class='tag'>{n} câmera(s)</div></div><span>›</span></a>""")
+    actions = "".join(action_rows) or "<p class='tag'>Nenhuma ação pendente no momento.</p>"
+
+    status_rows = ""
+    for label, n, status_value in flow_counts[:6]:
+        pct = int((n / cams_total) * 100) if cams_total else 0
+        status_rows += f"""<a class='status-row' href='{url_for('cameras', status=status_value)}'><div><b>{label}</b><div class='bar'><span style='width:{pct}%'></span></div></div><span>{n} ({pct}%)</span></a>"""
+
     body = f"""
-    <div class="grid">
-      <a class="card metric" href="{url_for('contracts')}"><h3>Contratos ativos</h3><b>{contracts_active}</b></a>
-      <a class="card metric" href="{url_for('cameras', status='Em operação')}"><h3>Câmeras em operação</h3><b>{cams_operation}</b></a>
-      <a class="card metric" href="{url_for('cameras', status='Testada e aprovada')}"><h3>Prontas para envio</h3><b>{cams_ready}</b></a>
-      <a class="card metric {'danger' if occ_open else ''}" href="{url_for('occurrences', status='abertas')}"><h3>Ocorrências em aberto</h3><b>{occ_open}</b></a>
-      <a class="card metric" href="{url_for('agenda_page', filtro='hoje')}"><h3>Agenda do dia</h3><b>{agenda_today}</b></a>
+    <div class="mini-grid">
+      <a class="card hero-card" href="{url_for('contracts')}"><div class="hero-icon">📁</div><div><h3>Contratos ativos</h3><b>{contracts_active}</b><br><span>ver contratos →</span></div></a>
+      <a class="card hero-card green" href="{url_for('cameras', status='Em operação')}"><div class="hero-icon">📷</div><div><h3>Câmeras em operação</h3><b>{cams_operation}</b><br><span>ver câmeras →</span></div></a>
+      <a class="card hero-card orange" href="{url_for('agenda_page', filtro='hoje')}"><div class="hero-icon">📅</div><div><h3>Agenda de hoje</h3><b>{agenda_today}</b><br><span>ver agenda →</span></div></a>
+      <a class="card hero-card red" href="{url_for('occurrences', status='abertas')}"><div class="hero-icon">⚠️</div><div><h3>Ocorrências abertas</h3><b>{occ_open}</b><br><span>{'requer atenção' if occ_open else 'sem pendências'}</span></div></a>
     </div>
 
-    <div class="panel">
-      <h2>Fluxo operacional das câmeras</h2>
-      <p class="tag">Total cadastrado: <b>{cams_total}</b>. Cada câmera aparece em apenas uma etapa do fluxo.</p>
-      <div class="grid">{flow_cards}</div>
+    <div class="oc-grid">
+      <div class="panel flow-board"><div class="actions"><div style="flex:1"><h2>Fluxo operacional das câmeras</h2><p class="tag">Total de câmeras: <b>{cams_total}</b>. Clique em uma etapa para visualizar os detalhes.</p></div><a class="btn" href="{url_for('cameras')}">Ver todas</a><a class="btn primary" href="{url_for('cameras')}">Gerenciar câmeras</a></div><div class="flow-line">{flow_cards}</div></div>
+      <div class="panel"><div class="actions"><h2 style="flex:1">Próximas ações</h2><a class="btn small" href="{url_for('agenda_page')}">Agenda</a></div>{actions}</div>
     </div>
 
-    <div class="panel">
-      <h2>Últimas movimentações</h2>
-      {moves}
+    <div class="oc-grid">
+      <div class="panel"><div class="actions"><h2 style="flex:1">Últimas movimentações</h2><a class="btn small" href="{url_for('cameras')}">Ver histórico</a></div><div class="timeline">{moves}</div></div>
+      <div class="panel"><h2>Distribuição por status</h2><div class="status-list">{status_rows}</div><p class="tag" style="margin-top:16px">Atualizado com dados do Supabase.</p></div>
     </div>
 
-    <div class="panel"><h2>Gestão operacional</h2><p class="tag">Este painel controla patrimônio, contratos, obras, movimentações e ocorrências. Status técnicos em tempo real, como bateria ou sinal, pertencem à plataforma de monitoramento/IA.</p></div>
+    <div class="bottom-strip">
+      <a class="strip-card" href="{url_for('contracts')}"><span class="dot">🏗️</span><div><b>{contracts_active}</b><div class="tag">Contratos ativos</div></div></a>
+      <a class="strip-card" href="{url_for('cameras', status='Testada e aprovada')}"><span class="dot">✅</span><div><b>{cams_ready}</b><div class="tag">Prontas para envio</div></div></a>
+      <a class="strip-card" href="{url_for('cameras', status='Na obra aguardando instalação')}"><span class="dot">🏗️</span><div><b>{dict((s,n) for s,n,v in flow_counts).get('Na obra',0)}</b><div class="tag">Na obra</div></div></a>
+      <a class="strip-card" href="{url_for('cameras', status='Em retorno')}"><span class="dot">↩️</span><div><b>{dict((s,n) for s,n,v in flow_counts).get('Em retorno',0)}</b><div class="tag">Em retorno</div></div></a>
+      <a class="strip-card" href="{url_for('occurrences', status='abertas')}"><span class="dot">⚠️</span><div><b>{occ_open}</b><div class="tag">Ocorrências abertas</div></div></a>
+    </div>
     """
     return page(body)
+
 
 
 @app.route("/clients")
