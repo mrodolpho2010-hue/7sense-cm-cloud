@@ -15,7 +15,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "2.0.6 Dashboard operacional"
+APP_VERSION = "2.1.0 Release estável"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -266,6 +266,15 @@ def status_class(s):
     if s in ("Aguardando teste", "Em estoque", "Disponível", "Aposentada", "Descartada"):
         return "muted"
     return "ok"
+
+
+def can_send_to_field(status):
+    """Regra operacional: somente câmeras testadas e aprovadas podem iniciar novo envio para obra."""
+    return status == "Testada e aprovada"
+
+
+def field_statuses():
+    return ["Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Aguardando retirada"]
 
 
 def rv(row, key, default=""):
@@ -736,8 +745,21 @@ def camera_form(r=None, contract_id=None):
         selected_client_id = str(cr["client_id"]) if cr and cr["client_id"] else ""
     if request.method == "POST":
         status_form = request.form.get("status") or "Aguardando teste"
+        posted_contract_id = request.form.get("contract_id") or None
+        # V2.0.7: não permite enviar/vincular câmera a obra se ela ainda estiver aguardando teste.
+        # A câmera só pode iniciar novo fluxo de campo quando estiver Testada e aprovada.
+        if r and not can_send_to_field(r["status"]):
+            if posted_contract_id and not r["contract_id"]:
+                flash("Esta câmera ainda não está testada e aprovada. Conclua o checklist antes de vinculá-la a uma obra.")
+                return redirect(url_for("camera_edit", id=r["id"]))
+            if status_form in field_statuses():
+                flash("Esta câmera ainda não está testada e aprovada. Para enviar à obra, conclua primeiro o checklist de teste.")
+                return redirect(url_for("camera_edit", id=r["id"]))
+        if not r and (posted_contract_id or status_form in field_statuses()):
+            flash("Nova câmera entra como Aguardando teste. Conclua o checklist antes de enviá-la para obra.")
+            return redirect(url_for("camera_new"))
         patrimonial_status = "Em estoque" if status_form in ("Aguardando teste", "Testada e aprovada") else status_form
-        vals = (request.form.get("model"), request.form.get("serial"), request.form.get("contract_id") or None, request.form.get("current_location"), request.form.get("service"), status_form, request.form.get("notes"), datetime.now().isoformat(), patrimonial_status)
+        vals = (request.form.get("model"), request.form.get("serial"), posted_contract_id, request.form.get("current_location"), request.form.get("service"), status_form, request.form.get("notes"), datetime.now().isoformat(), patrimonial_status)
         if r:
             execute("UPDATE cameras SET model=?,serial=?,contract_id=?,current_location=?,service=?,status=?,notes=?,updated_at=?,patrimonial_status=? WHERE id=?", vals+(r["id"],))
             flash("Câmera atualizada.")
@@ -752,8 +774,11 @@ def camera_form(r=None, contract_id=None):
     service_opts = "".join([f"<option {'selected' if val('service')==s else ''}>{s}</option>" for s in SERVICOS])
     status_opts = "".join([f"<option {'selected' if val('status')==s else ''}>{s}</option>" for s in STATUS_CAMERA])
     code_field = f"<label>Código<input name='code' value='{next_camera_code()}'></label>" if not r else f"<label>Código<input value='{val('code')}' disabled></label>"
+    bloqueio_html = ""
+    if r and not can_send_to_field(r["status"]):
+        bloqueio_html = "<p style='background:#fef3c7;border-radius:12px;padding:12px'><b>Regra operacional:</b> esta câmera ainda não está testada e aprovada. Ela não pode ser enviada para obra nem liberada para transporte.</p>"
     body = f"""<div class="panel"><h2>{'Editar' if r else 'Nova'} Câmera</h2>
-    <p class="tag">Escolha primeiro o <b>Cliente</b> e depois a <b>Obra/Contrato</b>. Isso evita confusão quando o mesmo cliente tiver várias obras.</p>
+    <p class="tag">Escolha primeiro o <b>Cliente</b> e depois a <b>Obra/Contrato</b>. Isso evita confusão quando o mesmo cliente tiver várias obras.</p>{bloqueio_html}
     <form method="post" class="formgrid">{code_field}
     <label>Modelo<input name="model" value="{val('model')}"></label><label>Nº Série<input name="serial" value="{val('serial')}"></label>
     <label>Cliente<select id="client_select" name="client_select">{client_opts}</select></label><label>Obra / contrato atual<select id="contract_select" name="contract_id">{contract_opts}</select></label>
@@ -930,6 +955,12 @@ def camera_transfer(id):
         new_service = request.form.get("service")
         new_status = request.form.get("status")
         note = request.form.get("note")
+        # V2.0.7: bloqueia transporte/obra se câmera não foi testada e aprovada.
+        # Evita que câmera aguardando teste saia para cliente por engano.
+        if not can_send_to_field(old["status"]):
+            if (not old["contract_id"] and new_contract) or new_status in field_statuses():
+                flash("Esta câmera ainda não está testada e aprovada. Conclua o checklist antes de liberar transporte ou vínculo com obra.")
+                return redirect(url_for("camera_transfer", id=id))
         execute("UPDATE cameras SET contract_id=?,current_location=?,service=?,status=?,updated_at=? WHERE id=?", (new_contract,new_loc,new_service,new_status,datetime.now().isoformat(),id))
         execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_service,new_service,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (id, old['contract_id'], new_contract, old['current_location'], new_loc, old['service'], new_service, old['status'], new_status, note, current_user()['name'], datetime.now().isoformat()))
         flash("Câmera transferida/atualizada.")
@@ -938,7 +969,10 @@ def camera_transfer(id):
     opts = "<option value='' data-client=''>Sem contrato / estoque</option>" + "".join([f"<option value='{r['id']}' data-client='{r['client_id'] or ''}' {'selected' if c['contract_id']==r['id'] else ''}>{r['client_name'] or 'Sem cliente'} - {r['obra']}</option>" for r in contracts_rows])
     services = "".join([f"<option {'selected' if c['service']==s else ''}>{s}</option>" for s in SERVICOS])
     statuses = "".join([f"<option {'selected' if c['status']==s else ''}>{s}</option>" for s in STATUS_CAMERA])
-    body = f"""<div class="panel"><h2>Transferir / Atualizar {c['code']}</h2><p class="tag">Selecione o cliente para filtrar somente as obras/contratos desse cliente.</p><form method="post" class="formgrid">
+    bloqueio_html = ""
+    if not can_send_to_field(c["status"]):
+        bloqueio_html = "<p style='background:#fef3c7;border-radius:12px;padding:12px'><b>Envio bloqueado:</b> esta câmera precisa estar Testada e aprovada antes de ser enviada para obra ou transporte.</p>"
+    body = f"""<div class="panel"><h2>Transferir / Atualizar {c['code']}</h2><p class="tag">Selecione o cliente para filtrar somente as obras/contratos desse cliente.</p>{bloqueio_html}<form method="post" class="formgrid">
     <label>Cliente<select id="client_select" name="client_select">{client_opts}</select></label><label>Novo contrato / obra<select id="contract_select" name="contract_id">{opts}</select></label>
     <label>Novo local<input name="current_location" value="{c['current_location'] or ''}"></label><label>Novo serviço<select name="service">{services}</select></label>
     <label>Novo status<select name="status">{statuses}</select></label><label class="full">Observação da movimentação<textarea name="note"></textarea></label><div class="full"><button class="primary">Salvar transferência</button></div></form></div>
@@ -1101,7 +1135,9 @@ def campo():
             execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (camera["id"], camera["current_location"], camera["current_location"], camera["status"], "Problema registrado", problem + (" - " + note if note else ""), "Campo", datetime.now().isoformat()))
             msg = "Problema registrado. A ocorrência foi aberta no painel."
         elif action in workflow:
-            if action != next_step:
+            if camera["status"] == "Aguardando teste":
+                msg = "Esta câmera ainda está aguardando teste. Ela só pode ser enviada para obra depois de testada e aprovada no painel."
+            elif action != next_step:
                 msg = "Esta etapa já foi realizada ou está fora de ordem. Leia o QR Code novamente e siga a próxima etapa liberada."
             else:
                 old_status, old_loc = camera["status"], camera["current_location"]
