@@ -18,7 +18,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.1.3 Manutenção com validação de itens"
+APP_VERSION = "3.1.4 Aba Manutenção"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -355,7 +355,7 @@ BASE = r"""
 </style>
 </head><body><div class="app-shell">
 <aside class="sidebar"><div class="logo"><div class="logo-mark">7</div><div><div class="logo-title">7Sense</div><div class="logo-sub">Data into Action</div></div></div>
-<nav class="nav"><a href="{{url_for('dashboard')}}">🏠 Dashboard</a><a href="{{url_for('cameras')}}">📷 Câmeras</a><a href="{{url_for('clients')}}">👥 Clientes</a><a href="{{url_for('contracts')}}">🏗 Contratos</a><a href="{{url_for('occurrences')}}">⚠️ Ocorrências</a><a href="{{url_for('agenda_page')}}">📅 Agenda</a><a href="{{url_for('field_links')}}">📱 Campo</a>{% if user %}<div class="settings"><a href="{{url_for('settings_page')}}">⚙️ Configurações</a><div class="settings-menu"><a href="{{url_for('profile_page')}}">Meu perfil</a><a href="{{url_for('change_password')}}">Alterar senha</a><a href="{{url_for('users_page')}}">Gerenciar usuários</a><a href="{{url_for('clear_database')}}">Limpar banco de dados</a><a href="{{url_for('about_page')}}">Sobre o sistema</a><a href="{{url_for('logout')}}">Sair</a></div></div>{% endif %}</nav>
+<nav class="nav"><a href="{{url_for('dashboard')}}">🏠 Dashboard</a><a href="{{url_for('cameras')}}">📷 Câmeras</a><a href="{{url_for('maintenance_page')}}">🔧 Manutenção</a><a href="{{url_for('clients')}}">👥 Clientes</a><a href="{{url_for('contracts')}}">🏗 Contratos</a><a href="{{url_for('occurrences')}}">⚠️ Ocorrências</a><a href="{{url_for('agenda_page')}}">📅 Agenda</a><a href="{{url_for('field_links')}}">📱 Campo</a>{% if user %}<div class="settings"><a href="{{url_for('settings_page')}}">⚙️ Configurações</a><div class="settings-menu"><a href="{{url_for('profile_page')}}">Meu perfil</a><a href="{{url_for('change_password')}}">Alterar senha</a><a href="{{url_for('users_page')}}">Gerenciar usuários</a><a href="{{url_for('clear_database')}}">Limpar banco de dados</a><a href="{{url_for('about_page')}}">Sobre o sistema</a><a href="{{url_for('logout')}}">Sair</a></div></div>{% endif %}</nav>
 {% if user %}<div class="side-footer"><span class="avatar">{{user['name'][:1]}}{{user['name'][1:2]}}</span><b>{{user['name']}}</b><div class="tag">{{user['role']}} · Online</div><div class="version">v{{version}}</div></div>{% endif %}</aside>
 <main class="main"><div class="wrap"><div class="top"><div><div class="brand">Bom dia, {{user['name'] if user else 'Marcos'}}! 👋</div><div class="tag">Bem-vindo ao 7Sense Operations Center</div>{% if user %}<div class="breadcrumb">{{breadcrumb or 'Dashboard'}} · Perfil: {{user['role']}}</div>{% endif %}</div><div class="top-actions"><form class="search top-search" action="{{url_for('cameras')}}"><input name="q" placeholder="Buscar câmeras, obras, contratos..."></form><div class="pill">🔔 0</div><div class="pill">📅 Operação</div><div class="pill">⚙️</div></div></div>
 {% with messages = get_flashed_messages() %}{% if messages %}{% for m in messages %}<div class="flash">{{m}}</div>{% endfor %}{% endif %}{% endwith %}
@@ -1282,6 +1282,28 @@ def camera_approve(id):
         return redirect(url_for("camera_view", id=id))
 
     return render_checklist()
+
+@app.route("/maintenance")
+@operacao_required
+def maintenance_page():
+    rows = query("""SELECT cameras.*, contracts.obra, contracts.city contract_city, contracts.state contract_state, clients.name client_name
+                    FROM cameras
+                    LEFT JOIN contracts ON contracts.id=cameras.contract_id
+                    LEFT JOIN clients ON clients.id=contracts.client_id
+                    WHERE cameras.status=? AND cameras.demo=?
+                    ORDER BY COALESCE(clients.name,''), COALESCE(contracts.obra,''), cameras.code""", ("Em manutenção", current_demo_flag()))
+    total = len(rows)
+    items = "".join(render_camera_row(c) for c in rows) or "<p class='tag'>Nenhuma câmera em manutenção neste momento.</p>"
+    body = f"""<div class='panel'>
+      <h2>🔧 Manutenção</h2>
+      <p class='tag'>Câmeras que foram reprovadas no teste ou encaminhadas para manutenção. Clique em <b>Verificar</b> para analisar os itens reprovados, aprovar após correção ou condenar o equipamento.</p>
+      <div class='grid' style='margin:14px 0'>
+        <a class='card metric' href='{url_for('cameras', status='Em manutenção')}'><h3>Câmeras em manutenção</h3><b>{total}</b></a>
+      </div>
+      <div class='row camera' style='color:#8da0ba;font-weight:700'><span>Câmera</span><span>Cliente / Obra</span><span>Local</span><span>Serviço</span><span>Status</span><span>Ações</span></div>
+      {items}
+    </div>"""
+    return page(body, breadcrumb="Dashboard > Manutenção")
 
 @app.route("/cameras/<int:id>/maintenance", methods=["GET", "POST"])
 @operacao_required

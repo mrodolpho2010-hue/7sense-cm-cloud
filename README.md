@@ -1,11 +1,15 @@
-# 7Sense CM Cloud v3.1.3
+# 7Sense Operations Manager v3.1.4
 
-## Manutenção com validação dos itens reprovados
+## Alteração
 
-Incluído:
-- Tela de manutenção mostra os itens reprovados no teste.
-- Cada item reprovado pode ser marcado como Resolvido ou Sem solução.
-- Se todos forem resolvidos, a câmera pode ser aprovada diretamente, sem voltar para teste.
-- Se não houver conserto, a câmera pode ser condenada/inutilizada com motivo obrigatório.
-- A lista de câmeras mostra botão Verificar para câmeras em manutenção.
-- Histórico/Dossiê preserva o ciclo de teste, reprovação, manutenção e aprovação/condenação.
+- Novo item lateral **🔧 Manutenção**.
+- A aba Manutenção lista somente câmeras em manutenção.
+- Cada câmera aparece com botão **Verificar**, abrindo o fluxo de manutenção já existente.
+- Mantidas as regras de manutenção por item reprovado, aprovação direta após correção e condenação do equipamento.
+
+## Atualização
+
+1. Copie os arquivos para a pasta GitHub `7sense-cm-cloud`.
+2. Commit: `v3.1.4 aba manutencao`.
+3. Push origin.
+4. Render: Manual Deploy > Clear build cache & deploy.
