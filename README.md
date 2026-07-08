@@ -1,21 +1,21 @@
-# 7Sense Operations Manager v3.1.8
+# 7Sense Operations Manager v3.1.9
 
-## Vinculação de câmeras aos contratos
+## Alertas de vencimento de contratos
 
-Alterações principais:
-- Contratos não abrem mais cadastro de câmera nova.
-- Botão no contrato mudou para **Vincular câmera**.
-- Vinculação lista somente câmeras já cadastradas, testadas e aprovadas, sem vínculo com outra obra.
-- Controle de limite pela quantidade de câmeras prevista no contrato.
-- Status novo: **Reservada**.
-- Câmera reservada pode ser desvinculada antes de ir para transporte.
-- Dossiê registra reserva e cancelamento de reserva.
+Incluído:
+- Card no Dashboard: **Contratos a vencer**.
+- Contagem de contratos que vencem em até 60 dias, até 30 dias e vencidos.
+- Selo de vencimento na lista de contratos.
+- Detalhe de prazo dentro da ficha do contrato.
+- Regras visuais:
+  - Vigente: verde.
+  - Até 60 dias: amarelo.
+  - Até 30 dias: laranja.
+  - Vencido: vermelho.
 
-Fluxo correto:
-Cadastrar câmera > Testar/aprovar > Vincular ao contrato > Reservada > Enviar para campo/transporte.
+## Atualização
 
-
-## v3.1.8
-- Correção da vinculação de câmeras no PostgreSQL/Supabase.
-- Removida comparação inválida contract_id='' em campo inteiro.
-- A lista de vínculo exibe somente câmeras testadas/aprovadas e sem contrato.
+1. Copiar os arquivos para o repositório GitHub.
+2. Commit: `v3.1.9 alertas vencimento contratos`
+3. Push origin.
+4. Render: Manual Deploy > Clear build cache & deploy.
