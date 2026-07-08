@@ -18,7 +18,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.1.9 Alertas de vencimento de contratos"
+APP_VERSION = "3.1.10 Otimização do Dashboard"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -567,11 +567,19 @@ def clear_database():
 @login_required
 def dashboard():
     df = 0
+
+    # Otimização v3.1.10:
+    # O Dashboard antes fazia uma consulta COUNT separada para cada status.
+    # No Render/Supabase isso podia abrir várias conexões e gerar timeout.
+    # Agora os status das câmeras são carregados em uma única consulta agrupada.
+    status_rows_db = query("SELECT status, COUNT(*) AS total FROM cameras WHERE demo=? GROUP BY status", (df,))
+    status_counts = {rv(r, 'status', ''): int(rv(r, 'total', 0) or 0) for r in status_rows_db}
+    cams_total = sum(status_counts.values())
+    cams_operation = status_counts.get('Em operação', 0)
+    cams_ready = status_counts.get('Testada e aprovada', 0)
+
     contracts_active = count("SELECT COUNT(*) FROM contracts WHERE status!='Encerrado' AND demo=?", (df,))
     deadline_summary = contract_deadline_summary(df)
-    cams_operation = count("SELECT COUNT(*) FROM cameras WHERE status='Em operação' AND demo=?", (df,))
-    cams_ready = count("SELECT COUNT(*) FROM cameras WHERE status='Testada e aprovada' AND demo=?", (df,))
-    cams_total = count("SELECT COUNT(*) FROM cameras WHERE demo=?", (df,))
     occ_open = count("SELECT COUNT(*) FROM occurrences WHERE status IN ('Aberta','Em andamento') AND archived_at IS NULL AND demo=?", (df,))
     today = date.today().isoformat()
     agenda_upcoming = count("SELECT COUNT(*) FROM agenda WHERE event_date>=? AND demo=?", (today, df))
@@ -579,6 +587,7 @@ def dashboard():
     flow_items = [
         ("Aguardando teste", "🧪", "Aguardando teste"),
         ("Testada e aprovada", "✅", "Testada e aprovada"),
+        ("Reservada", "📎", "Reservada"),
         ("Em transporte", "🚚", "Em transporte"),
         ("Na obra", "🏗️", "Na obra aguardando instalação"),
         ("Em operação", "📡", "Em operação"),
@@ -590,7 +599,7 @@ def dashboard():
     flow_cards = ""
     flow_counts = []
     for label, icon, status_value in flow_items:
-        n = count("SELECT COUNT(*) FROM cameras WHERE status=? AND demo=?", (status_value, df))
+        n = status_counts.get(status_value, 0)
         flow_counts.append((label, n, status_value))
         flow_cards += f"""<a class='flow-step' href='{url_for('cameras', status=status_value)}'><div class='circle'>{icon}</div><small>{label}</small><b>{n}</b></a>"""
 
@@ -612,19 +621,19 @@ def dashboard():
     if not moves:
         moves = "<p class='tag'>Nenhuma movimentação registrada ainda.</p>"
 
-    # próximas ações simples, com base em status que precisam de atuação humana
     action_rows = []
     for label, status_value, icon in [("Testar câmeras", "Aguardando teste", "🧪"), ("Enviar para obra", "Testada e aprovada", "🚚"), ("Instalação pendente", "Na obra aguardando instalação", "🏗️"), ("Retirada autorizada", "Aguardando retirada", "↩️")]:
-        n = count("SELECT COUNT(*) FROM cameras WHERE status=? AND demo=?", (status_value, df))
+        n = status_counts.get(status_value, 0)
         if n:
             action_rows.append(f"""<a class='timeline-item' href='{url_for('cameras', status=status_value)}'><span class='dot'>{icon}</span><div style='grid-column:span 2'><b>{label}</b><div class='tag'>{n} câmera(s)</div></div><span>›</span></a>""")
     actions = "".join(action_rows) or "<p class='tag'>Nenhuma ação pendente no momento.</p>"
 
     status_rows = ""
-    for label, n, status_value in flow_counts[:6]:
+    for label, n, status_value in flow_counts:
         pct = int((n / cams_total) * 100) if cams_total else 0
         status_rows += f"""<a class='status-row' href='{url_for('cameras', status=status_value)}'><div><b>{label}</b><div class='bar'><span style='width:{pct}%'></span></div></div><span>{n} ({pct}%)</span></a>"""
 
+    flow_map = {s:n for s,n,v in flow_counts}
     body = f"""
     <div class="mini-grid">
       <a class="card hero-card" href="{url_for('contracts')}"><div class="hero-icon">📁</div><div><h3>Contratos ativos</h3><b>{contracts_active}</b><br><span>ver contratos →</span></div></a>
@@ -647,12 +656,13 @@ def dashboard():
     <div class="bottom-strip">
       <a class="strip-card" href="{url_for('contracts')}"><span class="dot">🏗️</span><div><b>{contracts_active}</b><div class="tag">Contratos ativos</div></div></a>
       <a class="strip-card" href="{url_for('cameras', status='Testada e aprovada')}"><span class="dot">✅</span><div><b>{cams_ready}</b><div class="tag">Prontas para envio</div></div></a>
-      <a class="strip-card" href="{url_for('cameras', status='Na obra aguardando instalação')}"><span class="dot">🏗️</span><div><b>{dict((s,n) for s,n,v in flow_counts).get('Na obra',0)}</b><div class="tag">Na obra</div></div></a>
-      <a class="strip-card" href="{url_for('cameras', status='Em retorno')}"><span class="dot">↩️</span><div><b>{dict((s,n) for s,n,v in flow_counts).get('Em retorno',0)}</b><div class="tag">Em retorno</div></div></a>
+      <a class="strip-card" href="{url_for('cameras', status='Na obra aguardando instalação')}"><span class="dot">🏗️</span><div><b>{flow_map.get('Na obra',0)}</b><div class="tag">Na obra</div></div></a>
+      <a class="strip-card" href="{url_for('cameras', status='Em retorno')}"><span class="dot">↩️</span><div><b>{flow_map.get('Em retorno',0)}</b><div class="tag">Em retorno</div></div></a>
       <a class="strip-card" href="{url_for('occurrences', status='abertas')}"><span class="dot">⚠️</span><div><b>{occ_open}</b><div class="tag">Ocorrências abertas</div></div></a>
     </div>
     """
     return page(body)
+
 
 
 

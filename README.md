@@ -1,21 +1,17 @@
-# 7Sense Operations Manager v3.1.9
+# 7Sense CM Cloud - v3.1.10
 
-## Alertas de vencimento de contratos
+## Otimização do Dashboard
 
-Incluído:
-- Card no Dashboard: **Contratos a vencer**.
-- Contagem de contratos que vencem em até 60 dias, até 30 dias e vencidos.
-- Selo de vencimento na lista de contratos.
-- Detalhe de prazo dentro da ficha do contrato.
-- Regras visuais:
-  - Vigente: verde.
-  - Até 60 dias: amarelo.
-  - Até 30 dias: laranja.
-  - Vencido: vermelho.
+Correções principais:
 
-## Atualização
+- Dashboard otimizado para evitar timeout no Render/Supabase.
+- Contagens de câmeras por status agora usam consulta agrupada.
+- Mantém alertas de vencimento de contratos da v3.1.9.
+- Reduz quantidade de conexões e consultas ao banco na tela inicial.
 
-1. Copiar os arquivos para o repositório GitHub.
-2. Commit: `v3.1.9 alertas vencimento contratos`
+## Deploy
+
+1. Copie os arquivos para a pasta do GitHub.
+2. Commit: `v3.1.10 otimizacao dashboard`
 3. Push origin.
 4. Render: Manual Deploy > Clear build cache & deploy.
