@@ -18,7 +18,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.1.7 Vinculação de câmeras aos contratos"
+APP_VERSION = "3.1.8 Vinculação de câmeras aos contratos"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -764,7 +764,7 @@ def contract_link_camera(id):
         return redirect(url_for("contract_view", id=id))
 
     cams = query("""SELECT * FROM cameras
-                    WHERE demo=? AND (contract_id IS NULL OR contract_id='') AND status='Testada e aprovada'
+                    WHERE demo=? AND contract_id IS NULL AND status='Testada e aprovada'
                     ORDER BY code""", (current_demo_flag(),))
     rows = []
     for c in cams:
