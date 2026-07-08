@@ -9,6 +9,7 @@ from urllib.parse import quote
 from html import escape
 import qrcode
 import base64
+import re
 from PIL import Image, ImageDraw, ImageFont
 
 try:
@@ -17,7 +18,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.1.2 Checklist inteligente"
+APP_VERSION = "3.1.3 Manutenção com validação de itens"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -246,6 +247,29 @@ def scalar(row, default=None):
         except Exception:
             return default
 
+
+
+
+def parse_failed_checklist(checklist_text):
+    """Extrai itens reprovados do checklist salvo em texto.
+    Formato esperado: Item: Reprovado (observação); Item 2: Aprovado
+    Retorna lista de dicts: {item, obs}
+    """
+    failed = []
+    if not checklist_text:
+        return failed
+    for part in str(checklist_text).split(';'):
+        part = part.strip()
+        if not part or ': Reprovado' not in part:
+            continue
+        item = part.split(': Reprovado', 1)[0].strip()
+        obs = ''
+        m = re.search(r'\((.*?)\)', part)
+        if m:
+            obs = m.group(1).strip()
+        if item:
+            failed.append({'item': item, 'obs': obs})
+    return failed
 
 def count(sql, params=()):
     r = one(sql, params)
@@ -719,7 +743,7 @@ def camera_row(c, user_role=None):
     local = rv(c, 'current_location', '-') or '-'
     servico = rv(c, 'service', '-') or '-'
     ver_label = 'Ver / ocorrência' if active_occ else 'Ver'
-    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{code}{aprovado}</b><span><b>{cliente}</b><br><small>{obra}</small></span><span>{local}</span><span>{servico}</span><span><span class='badge {cls}'>{status}</span>{occ_badge}</span><span class='actions'>{qr_btn}{dossier_btn}{test_btn}<a class='btn small' href='{url_for('camera_view', id=cam_id)}'>{ver_label}</a>{edit_btns}</span></div>"
+    return f"<div class='row camera { 'danger' if cls=='danger' else ''}'><b>{code}{aprovado}</b><span><b>{cliente}</b><br><small>{obra}</small></span><span>{local}</span><span>{servico}</span><span><span class='badge {cls}'>{status}</span>{occ_badge}</span><span class='actions'>{qr_btn}{dossier_btn}{test_btn}<a class='btn small' href='{url_for('camera_maintenance', id=cam_id) if status == 'Em manutenção' else url_for('camera_view', id=cam_id)}'>{'Verificar' if status == 'Em manutenção' else ver_label}</a>{edit_btns}</span></div>"
 
 
 @app.route("/cameras")
@@ -1266,42 +1290,122 @@ def camera_maintenance(id):
     if not c:
         flash("Câmera não encontrada.")
         return redirect(url_for("cameras"))
+
+    failed_items = parse_failed_checklist(rv(c, 'tested_checklist', '') or '')
+
+    def render_maintenance(form_data=None, field_errors=None, summary_errors=None):
+        form_data = form_data or {}
+        field_errors = field_errors or {}
+        summary_errors = summary_errors or []
+        pending_html = ""
+        if summary_errors:
+            pending_html = "<div class='card' style='border:1px solid #ef4444;background:rgba(239,68,68,.12);color:#fecaca'><b>Não foi possível concluir a manutenção.</b><ul>" + "".join(f"<li>{escape(e)}</li>" for e in summary_errors) + "</ul></div>"
+
+        if failed_items:
+            item_cards = []
+            resolved_count = 0
+            for i, fail in enumerate(failed_items):
+                item = fail['item']
+                original_obs = fail['obs']
+                key = f"item_{i}"
+                result = form_data.get(f"result_{key}", "")
+                obs = form_data.get(f"obs_{key}", "")
+                if result == "Resolvido":
+                    resolved_count += 1
+                err = field_errors.get(key, "")
+                border = "border:1px solid #ef4444;background:rgba(239,68,68,.10)" if err else ""
+                checked_ok = "checked" if result == "Resolvido" else ""
+                checked_bad = "checked" if result == "Sem solução" else ""
+                err_html = f"<p style='color:#fca5a5;margin:8px 0 0'><b>⚠ {escape(err)}</b></p>" if err else ""
+                item_cards.append(f"""
+                <div class='card' style='margin-bottom:10px;{border}'>
+                  <h3 style='margin-top:0'>{escape(item)}</h3>
+                  <p class='tag'><b>Problema registrado no teste:</b> {escape(original_obs or 'Sem observação anterior.')}</p>
+                  <label style='display:inline-block;margin-right:18px'>
+                    <input type='radio' name='result_{key}' value='Resolvido' required {checked_ok}> ✅ Resolvido / aprovado
+                  </label>
+                  <label style='display:inline-block'>
+                    <input type='radio' name='result_{key}' value='Sem solução' required {checked_bad}> ❌ Sem solução
+                  </label>
+                  <textarea name='obs_{key}' placeholder='O que foi feito neste item? Ex.: cartão substituído, conector limpo, teste de imagem normalizado...' style='margin-top:10px'>{escape(obs)}</textarea>
+                  {err_html}
+                </div>""")
+            progress = int((resolved_count / len(failed_items)) * 100)
+            checklist_html = f"""
+              <div class='card' style='margin-bottom:14px'>
+                <b>Itens reprovados no teste</b>
+                <div style='height:10px;background:rgba(148,163,184,.25);border-radius:999px;overflow:hidden;margin:10px 0'>
+                  <div style='height:10px;width:{progress}%;background:#22c55e'></div>
+                </div>
+                <span class='muted'>{resolved_count} de {len(failed_items)} itens resolvidos</span>
+              </div>
+              {''.join(item_cards)}
+            """
+        else:
+            checklist_html = """<div class='card'><h3>Nenhum item reprovado encontrado</h3><p class='tag'>Registre os serviços realizados ou condene o equipamento, se não houver reparo viável.</p></div>"""
+
+        details_value = escape(form_data.get('details', ''))
+        body = f"""<div class='panel'><h2>🔧 Manutenção {escape(c['code'])}</h2>
+          <p><span class='badge warn'>{escape(c['status'])}</span></p>
+          <p class='tag'>Verifique somente os itens que foram reprovados no teste. Se todos forem corrigidos, aprove a câmera diretamente. Se não houver conserto, condene o equipamento.</p>
+          {pending_html}
+          <form method='post' class='formgrid'>
+            <div class='full'>{checklist_html}</div>
+            <label class='full'>Observações gerais da manutenção<textarea name='details' placeholder='Ex.: limpeza realizada, conector substituído, cartão SD novo, equipamento sem reparo...'>{details_value}</textarea></label>
+            <div class='full actions'>
+              <button class='primary' name='action' value='approve'>✅ Aprovar câmera</button>
+              <button class='danger' name='action' value='condemn' onclick="return confirm('Confirmar condenação do equipamento?')">🚫 Condenar equipamento</button>
+              <a class='btn' href='{url_for('camera_view', id=id)}'>Cancelar</a>
+            </div>
+          </form>
+        </div>"""
+        return page(body, breadcrumb=f"Dashboard > Câmeras > Manutenção {escape(c['code'])}")
+
     if request.method == "POST":
         action = request.form.get("action")
         details = request.form.get("details", "").strip()
         now = datetime.now().isoformat()
         old_status = c["status"]
-        if action == "completed":
-            note = "Manutenção concluída. Câmera deve retornar para teste." + ((" Serviços realizados: " + details) if details else "")
-            execute("UPDATE cameras SET status=?, patrimonial_status=?, notes=?, updated_at=? WHERE id=?", ("Aguardando teste", "Em estoque", (((c["notes"] or "") + "\n" + note).strip()), now, id))
-            execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Aguardando teste", note, current_user()["name"], now))
-            flash("Manutenção concluída. A câmera voltou para Aguardando teste.")
+        form_data = {k: v for k, v in request.form.items()}
+        field_errors = {}
+        summary_errors = []
+
+        if action == "approve":
+            resolved_notes = []
+            if failed_items:
+                for i, fail in enumerate(failed_items):
+                    key = f"item_{i}"
+                    result = request.form.get(f"result_{key}", "").strip()
+                    obs = request.form.get(f"obs_{key}", "").strip()
+                    if result not in ("Resolvido", "Sem solução"):
+                        field_errors[key] = "Informe se este item foi resolvido ou permanece sem solução."
+                        summary_errors.append(f"{fail['item']} não verificado.")
+                    elif result == "Sem solução":
+                        field_errors[key] = "Item ainda sem solução. Para aprovar a câmera, todos os itens precisam estar resolvidos."
+                        summary_errors.append(f"{fail['item']} permanece sem solução.")
+                    else:
+                        resolved_notes.append(f"{fail['item']}: resolvido" + (f" ({obs})" if obs else ""))
+                if field_errors:
+                    return render_maintenance(form_data, field_errors, summary_errors)
+            note = "Manutenção concluída e câmera aprovada. Itens corrigidos: " + ("; ".join(resolved_notes) if resolved_notes else "Sem itens reprovados pendentes")
+            if details:
+                note += " | Observações gerais: " + details
+            execute("UPDATE cameras SET status=?, patrimonial_status=?, tested_approved_at=?, notes=?, updated_at=? WHERE id=?", ("Testada e aprovada", "Em estoque", now, (((c["notes"] or "") + "\n" + note).strip()), now, id))
+            execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Testada e aprovada", note, current_user()["name"], now))
+            flash("Manutenção concluída. Câmera testada/aprovada e liberada para novo envio.")
             return redirect(url_for("camera_view", id=id))
+
         if action == "condemn":
             if not details:
-                flash("Informe o motivo para condenar o equipamento.")
-                return redirect(url_for("camera_maintenance", id=id))
+                summary_errors.append("Informe o motivo para condenar o equipamento.")
+                return render_maintenance(form_data, {}, summary_errors)
             note = "Equipamento condenado pela manutenção. Motivo: " + details
             execute("UPDATE cameras SET status=?, patrimonial_status=?, notes=?, updated_at=? WHERE id=?", ("Inutilizada", "Inutilizada", (((c["notes"] or "") + "\n" + note).strip()), now, id))
             execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Inutilizada", note, current_user()["name"], now))
             flash("Câmera condenada e marcada como inutilizada. O dossiê foi preservado.")
             return redirect(url_for("camera_dossie", id=id))
-    recent = query("SELECT * FROM camera_history WHERE camera_id=? ORDER BY created_at DESC LIMIT 6", (id,))
-    recent_html = "".join([f"<li><b>{rv(h,'created_at','')}</b><br>{rv(h,'note','')}</li>" for h in recent]) or "<li>Nenhum histórico encontrado.</li>"
-    body = f"""<div class='panel'><h2>🔧 Manutenção {c['code']}</h2>
-      <p><span class='badge warn'>{c['status']}</span></p>
-      <div class='card'><h3>Últimos registros</h3><ul>{recent_html}</ul></div>
-      <form method='post' class='formgrid'>
-        <label class='full'>Serviços realizados / motivo<textarea name='details' placeholder='Ex.: troca de cartão, limpeza de conector, substituição de cabo, placa sem reparo...'></textarea></label>
-        <div class='full actions'>
-          <button class='primary' name='action' value='completed'>✅ Manutenção concluída</button>
-          <button class='danger' name='action' value='condemn' onclick="return confirm('Confirmar condenação do equipamento?')">🚫 Condenar equipamento</button>
-          <a class='btn' href='{url_for('camera_view', id=id)}'>Cancelar</a>
-        </div>
-      </form>
-    </div>"""
-    return page(body, breadcrumb=f"Dashboard > Câmeras > Manutenção {c['code']}")
 
+    return render_maintenance()
 
 @app.route("/cameras/<int:id>/transfer", methods=["GET", "POST"])
 @operacao_required
