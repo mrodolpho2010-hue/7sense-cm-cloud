@@ -18,7 +18,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.1.6 Menu e apresentação diretoria"
+APP_VERSION = "3.1.7 Vinculação de câmeras aos contratos"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -36,7 +36,7 @@ app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # limite de upload para foto
 
 SERVICOS = ["IA Segurança", "Timelapse", "IA BIM", "Acompanhamento de Valas", "Controle de Pessoas", "Monitoramento de Equipamentos", "Outro"]
 STATUS_CONTRATO = ["Planejamento", "Implantação", "Operação", "Manutenção", "Encerrado"]
-STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Inutilizada"]
+STATUS_CAMERA = ["Aguardando teste", "Testada e aprovada", "Reservada", "Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Inutilizada"]
 STATUS_ATENCAO = ["Offline", "Em manutenção"]
 
 
@@ -193,7 +193,8 @@ def init_db():
         "UPDATE cameras SET status='Inutilizada', patrimonial_status='Inutilizada' WHERE status IN ('Aposentada','Descartada')",
         "UPDATE camera_history SET new_status='Inutilizada' WHERE new_status IN ('Aposentada','Descartada')",
         "UPDATE camera_history SET old_status='Inutilizada' WHERE old_status IN ('Aposentada','Descartada')",
-        "UPDATE cameras SET patrimonial_status='Em estoque' WHERE status IN ('Aguardando teste','Testada e aprovada') AND (patrimonial_status IS NULL OR patrimonial_status='')"
+        "UPDATE cameras SET patrimonial_status='Em estoque' WHERE status IN ('Aguardando teste','Testada e aprovada') AND (patrimonial_status IS NULL OR patrimonial_status='')",
+        "UPDATE cameras SET patrimonial_status='Reservada' WHERE status='Reservada' AND (patrimonial_status IS NULL OR patrimonial_status='')"
     ]:
         try:
             execute(sql)
@@ -301,7 +302,7 @@ def status_class(s):
 
 def can_send_to_field(status):
     """Regra operacional: somente câmeras testadas e aprovadas podem iniciar novo envio para obra."""
-    return status == "Testada e aprovada"
+    return status in ("Testada e aprovada", "Reservada")
 
 
 def field_statuses():
@@ -712,11 +713,88 @@ def contract_view(id):
                     LEFT JOIN clients cl ON cl.id=co.client_id
                     WHERE ca.contract_id=? ORDER BY ca.code""", (id,))
     items = "".join([camera_row(c, current_user()["role"] if current_user() else None) for c in cams])
-    body = f"""<div class="panel"><h2>{r['client_name']} – {r['obra']}</h2><p><span class="badge {status_class(r['status'])}">{r['status']}</span> · {r['city']}/{r['state']} · Previstas: {r['expected_cameras']}</p>
-    <div class="actions"><a class="btn" href="{url_for('contracts')}">Voltar</a>{'<a class=\"btn primary\" href=\"'+url_for('camera_new', contract_id=r['id'])+'\">Adicionar câmera</a>' if current_user()['role']=='operacao' else ''}</div></div>
-    <div class="panel"><h2>Câmeras do contrato</h2>{items or '<p>Nenhuma câmera.</p>'}</div>"""
+    expected = int(r['expected_cameras'] or 0)
+    linked = len(cams)
+    slots = max(expected - linked, 0)
+    if current_user()['role']=='operacao':
+        if expected and linked >= expected:
+            link_btn = "<span class='badge warn'>Limite de câmeras atingido</span>"
+        else:
+            link_btn = f"<a class='btn primary' href='{url_for('contract_link_camera', id=r['id'])}'>📎 Vincular câmera</a>"
+    else:
+        link_btn = ""
+    body = f"""<div class="panel"><h2>{r['client_name']} – {r['obra']}</h2><p><span class="badge {status_class(r['status'])}">{r['status']}</span> · {r['city']}/{r['state']}</p>
+    <div class='grid' style='margin:14px 0'><div class='metric'><h3>Câmeras previstas</h3><b>{expected}</b></div><div class='metric'><h3>Vinculadas</h3><b>{linked}</b></div><div class='metric'><h3>Vagas disponíveis</h3><b>{slots}</b></div></div>
+    <div class="actions"><a class="btn" href="{url_for('contracts')}">Voltar</a>{link_btn}</div></div>
+    <div class="panel"><h2>Câmeras vinculadas ao contrato</h2>{items or '<p>Nenhuma câmera vinculada a este contrato.</p>'}</div>"""
     return page(body, breadcrumb=f"Dashboard > Contratos > {r['client_name']} {r['obra']}")
 
+
+
+@app.route("/contracts/<int:id>/link-camera", methods=["GET", "POST"])
+@operacao_required
+def contract_link_camera(id):
+    r = one("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.id=?", (id,))
+    if not r:
+        flash("Contrato não encontrado.")
+        return redirect(url_for("contracts"))
+    expected = int(r["expected_cameras"] or 0)
+    linked = count("SELECT COUNT(*) FROM cameras WHERE contract_id=?", (id,))
+    slots = max(expected - linked, 0)
+    if expected and slots <= 0:
+        flash("Limite de câmeras do contrato atingido. Para vincular mais câmeras, edite a quantidade prevista no contrato.")
+        return redirect(url_for("contract_view", id=id))
+
+    if request.method == "POST":
+        camera_id = request.form.get("camera_id")
+        cam = one("SELECT * FROM cameras WHERE id=?", (camera_id,))
+        if not cam:
+            flash("Câmera não encontrada.")
+            return redirect(url_for("contract_link_camera", id=id))
+        if cam["contract_id"]:
+            flash("Esta câmera já está vinculada a outro contrato/obra.")
+            return redirect(url_for("contract_link_camera", id=id))
+        if cam["status"] != "Testada e aprovada":
+            flash("Somente câmeras testadas e aprovadas podem ser vinculadas ao contrato.")
+            return redirect(url_for("contract_link_camera", id=id))
+        now = datetime.now().isoformat()
+        execute("UPDATE cameras SET contract_id=?, status=?, patrimonial_status=?, updated_at=? WHERE id=?", (id, "Reservada", "Reservada", now, camera_id))
+        execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (camera_id, cam["contract_id"], id, cam["current_location"], cam["current_location"], cam["status"], "Reservada", f"Câmera reservada/vinculada ao contrato {r['obra']}", current_user()["name"], now))
+        flash("Câmera vinculada ao contrato e reservada para esta obra.")
+        return redirect(url_for("contract_view", id=id))
+
+    cams = query("""SELECT * FROM cameras
+                    WHERE demo=? AND (contract_id IS NULL OR contract_id='') AND status='Testada e aprovada'
+                    ORDER BY code""", (current_demo_flag(),))
+    rows = []
+    for c in cams:
+        rows.append(f"""<div class='row'>
+            <b>{c['code']}</b><span>{c['model'] or '-'}</span><span>{c['serial'] or '-'}</span><span><span class='badge ok'>Testada e aprovada</span></span>
+            <span><form method='post' style='margin:0'><input type='hidden' name='camera_id' value='{c['id']}'><button class='primary'>Selecionar</button></form></span>
+        </div>""")
+    body = f"""<div class='panel'><h2>📎 Vincular câmera ao contrato</h2>
+    <p><b>Cliente:</b> {r['client_name'] or '-'}<br><b>Obra:</b> {r['obra'] or '-'}<br><b>Quantidade prevista:</b> {expected} · <b>Vinculadas:</b> {linked} · <b>Vagas:</b> {slots}</p>
+    <p class='tag'>Apenas câmeras <b>testadas e aprovadas</b>, sem vínculo com outra obra, aparecem nesta lista.</p>
+    <div class='actions'><a class='btn' href='{url_for('contract_view', id=id)}'>Voltar ao contrato</a></div>
+    <div style='margin-top:12px'>{''.join(rows) if rows else '<p>Nenhuma câmera testada e aprovada disponível para vínculo.</p>'}</div></div>"""
+    return page(body, breadcrumb=f"Dashboard > Contratos > Vincular câmera")
+
+
+@app.route("/contracts/<int:contract_id>/unlink-camera/<int:camera_id>", methods=["POST"])
+@operacao_required
+def contract_unlink_camera(contract_id, camera_id):
+    cam = one("SELECT * FROM cameras WHERE id=? AND contract_id=?", (camera_id, contract_id))
+    if not cam:
+        flash("Câmera não encontrada neste contrato.")
+        return redirect(url_for("contract_view", id=contract_id))
+    if cam["status"] != "Reservada":
+        flash("Só é possível desvincular câmera que ainda está apenas reservada.")
+        return redirect(url_for("contract_view", id=contract_id))
+    now = datetime.now().isoformat()
+    execute("UPDATE cameras SET contract_id=NULL, status=?, patrimonial_status=?, updated_at=? WHERE id=?", ("Testada e aprovada", "Em estoque", now, camera_id))
+    execute("INSERT INTO camera_history(camera_id,old_contract_id,new_contract_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (camera_id, contract_id, None, cam["current_location"], cam["current_location"], cam["status"], "Testada e aprovada", "Reserva cancelada / câmera desvinculada do contrato", current_user()["name"], now))
+    flash("Câmera desvinculada e retornou para testada/aprovada em estoque.")
+    return redirect(url_for("contract_view", id=contract_id))
 
 def camera_row(c, user_role=None):
     # Compatível com SQLite Row, psycopg dict_row e bancos antigos sem algumas colunas.
@@ -738,7 +816,10 @@ def camera_row(c, user_role=None):
     qr_btn = f"<a class='btn small' href='{url_for('camera_qr', id=cam_id)}'>📷 QR</a>"
     dossier_btn = f"<a class='btn small' href='{url_for('camera_dossie', id=cam_id)}'>📑 Dossiê</a>"
     test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=cam_id)}'>🧪 Testar</a>" if (user_role or (current_user()['role'] if current_user() else None))=='operacao' else ""
-    edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=cam_id)}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=cam_id)}'>Transferir</a>") if (user_role or (current_user()['role'] if current_user() else None))=='operacao' else ""
+    role = (user_role or (current_user()['role'] if current_user() else None))
+    edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=cam_id)}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=cam_id)}'>Transferir</a>") if role=='operacao' else ""
+    if role=='operacao' and status == 'Reservada' and rv(c, 'contract_id', None):
+        edit_btns += f" <form method='post' action='{url_for('contract_unlink_camera', contract_id=rv(c, 'contract_id'), camera_id=cam_id)}' style='display:inline' onsubmit='return confirm(&quot;Cancelar reserva desta câmera?&quot;)'><button class='btn small' type='submit'>Desvincular</button></form>"
     cliente = rv(c, 'client_name', '-') or '-'
     obra = rv(c, 'obra', '-') or '-'
     local = rv(c, 'current_location', '-') or '-'
@@ -763,7 +844,7 @@ def cameras():
                     LEFT JOIN clients cl ON cl.id=co.client_id
                     {where}
                     ORDER BY cl.name, co.obra, ca.code""", params)
-    filters = ["Todas", "Aguardando teste", "Testada e aprovada", "Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Inutilizada"]
+    filters = ["Todas", "Aguardando teste", "Testada e aprovada", "Reservada", "Em transporte", "Na obra aguardando instalação", "Instalando", "Em operação", "Aguardando retirada", "Em retorno", "Offline", "Em manutenção", "Inutilizada"]
     def filter_count(label):
         if label == "Todas":
             return count("SELECT COUNT(*) FROM cameras WHERE demo=?", (current_demo_flag(),))

@@ -1,11 +1,15 @@
-# 7Sense CM Cloud v3.1.6
+# 7Sense Operations Manager v3.1.7
 
-Versão de apresentação para diretoria.
+## Vinculação de câmeras aos contratos
 
-## Alterações
-- Reorganização do menu lateral conforme fluxo operacional.
-- Cabeçalho de marca com 7Sense / Operations Manager / Data into Action.
-- Renomeação visual de módulos: Agenda Operacional, Operação de Campo e Centro de Manutenção.
-- Rodapé discreto com versão e Seven Sense Tecnologia.
-- Remoção da busca global do topo para visual mais limpo.
-- Mantida toda a lógica operacional da v3.1.5.
+Alterações principais:
+- Contratos não abrem mais cadastro de câmera nova.
+- Botão no contrato mudou para **Vincular câmera**.
+- Vinculação lista somente câmeras já cadastradas, testadas e aprovadas, sem vínculo com outra obra.
+- Controle de limite pela quantidade de câmeras prevista no contrato.
+- Status novo: **Reservada**.
+- Câmera reservada pode ser desvinculada antes de ir para transporte.
+- Dossiê registra reserva e cancelamento de reserva.
+
+Fluxo correto:
+Cadastrar câmera > Testar/aprovar > Vincular ao contrato > Reservada > Enviar para campo/transporte.
