@@ -18,7 +18,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.2.0 Ciclo de vida dos contratos"
+APP_VERSION = "3.2.1 Ciclo de vida dos contratos"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -124,7 +124,7 @@ def init_db():
     execute("""CREATE TABLE IF NOT EXISTS contracts(
         id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, client_id INTEGER, obra TEXT, city TEXT, state TEXT, start_date TEXT, end_date TEXT, expected_cameras INTEGER DEFAULT 0, status TEXT, notes TEXT, demo INTEGER DEFAULT 0, created_at TEXT
     )""")
-    # V3.2.0: ciclo de vida do contrato e encerramento operacional
+    # V3.2.1: ciclo de vida do contrato e encerramento operacional
     for col in [
         "closed_at TEXT",
         "closed_reason TEXT",
@@ -647,8 +647,8 @@ def dashboard():
     flow_map = {s:n for s,n,v in flow_counts}
     body = f"""
     <div class="mini-grid">
-      <a class="card hero-card" href="{url_for('contracts')}"><div class="hero-icon">📁</div><div><h3>Contratos ativos</h3><b>{contracts_active}</b><br><span>ver contratos →</span></div></a>
-      <a class="card hero-card orange" href="{url_for('contracts')}"><div class="hero-icon">⏳</div><div><h3>Contratos a vencer</h3><b>{deadline_summary['attention']}</b><br><span>60d: {deadline_summary['d60']} · 30d: {deadline_summary['d30']} · vencidos: {deadline_summary['expired']}</span></div></a>
+      <a class="card hero-card" href="{url_for('contracts', status='Ativos')}"><div class="hero-icon">📁</div><div><h3>Contratos ativos</h3><b>{contracts_active}</b><br><span>ver ativos →</span></div></a>
+      <a class="card hero-card orange" href="{url_for('contracts', status='A vencer')}"><div class="hero-icon">⏳</div><div><h3>Contratos a vencer</h3><b>{deadline_summary['d60'] + deadline_summary['d30']}</b><br><span>60d: {deadline_summary['d60']} · 30d: {deadline_summary['d30']}</span></div></a>
       <a class="card hero-card green" href="{url_for('cameras', status='Em operação')}"><div class="hero-icon">📷</div><div><h3>Câmeras em operação</h3><b>{cams_operation}</b><br><span>ver câmeras →</span></div></a>
       <a class="card hero-card orange" href="{url_for('agenda_page', filtro='proximos')}"><div class="hero-icon">📅</div><div><h3>Próximos agendamentos</h3><b>{agenda_upcoming}</b><br><span>ver agenda →</span></div></a>
       <a class="card hero-card red" href="{url_for('occurrences', status='abertas')}"><div class="hero-icon">⚠️</div><div><h3>Ocorrências abertas</h3><b>{occ_open}</b><br><span>{'requer atenção' if occ_open else 'sem pendências'}</span></div></a>
@@ -665,7 +665,7 @@ def dashboard():
     </div>
 
     <div class="bottom-strip">
-      <a class="strip-card" href="{url_for('contracts')}"><span class="dot">🏗️</span><div><b>{contracts_active}</b><div class="tag">Contratos ativos</div></div></a>
+      <a class="strip-card" href="{url_for('contracts', status='Ativos')}"><span class="dot">🏗️</span><div><b>{contracts_active}</b><div class="tag">Contratos ativos</div></div></a>
       <a class="strip-card" href="{url_for('cameras', status='Testada e aprovada')}"><span class="dot">✅</span><div><b>{cams_ready}</b><div class="tag">Prontas para envio</div></div></a>
       <a class="strip-card" href="{url_for('cameras', status='Na obra aguardando instalação')}"><span class="dot">🏗️</span><div><b>{flow_map.get('Na obra',0)}</b><div class="tag">Na obra</div></div></a>
       <a class="strip-card" href="{url_for('cameras', status='Em retorno')}"><span class="dot">↩️</span><div><b>{flow_map.get('Em retorno',0)}</b><div class="tag">Em retorno</div></div></a>
@@ -735,6 +735,9 @@ def contracts():
     elif status == "Ativos":
         q = "WHERE c.demo=? AND c.status!='Encerrado'"
         params = (df,)
+    elif status == "A vencer":
+        q = "WHERE c.demo=? AND c.status!='Encerrado' AND c.end_date IS NOT NULL AND c.end_date!='' AND c.end_date >= ? AND c.end_date <= ?"
+        params = (df, today, d60)
     elif status == "Vencidos":
         q = "WHERE c.demo=? AND c.status!='Encerrado' AND c.end_date IS NOT NULL AND c.end_date!='' AND c.end_date < ?"
         params = (df, today)
@@ -752,7 +755,7 @@ def contracts():
         params = (df, status)
     rows = query(f"SELECT c.*, cl.name client_name, (SELECT COUNT(*) FROM cameras ca WHERE ca.contract_id=c.id AND ca.demo=c.demo) cam_count FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id {q} ORDER BY c.created_at DESC", params)
     can_edit = current_user()["role"] == "operacao"
-    filter_names = ["Todos", "Ativos", "Vence em 60d", "Vence em 30d", "Vencidos", "Encerrados"]
+    filter_names = ["Todos", "Ativos", "A vencer", "Vence em 60d", "Vence em 30d", "Vencidos", "Encerrados"]
     filters = "".join([f"<a class='{ 'active' if status==s else ''}' href='{url_for('contracts', status=s)}'>{s}</a>" for s in filter_names])
     items = ""
     for r in rows:
