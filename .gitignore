@@ -1,6 +1,0 @@
-__pycache__/
-*.pyc
-.env
-instance/
-.DS_Store
-data/*.sqlite3

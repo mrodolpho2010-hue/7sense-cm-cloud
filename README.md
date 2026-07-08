@@ -1,15 +1,18 @@
-# 7Sense Operations Manager v3.1.4
+# 7Sense Operations Manager v3.1.5
 
-## Alteração
+## Manutenção estabilizada
 
-- Novo item lateral **🔧 Manutenção**.
-- A aba Manutenção lista somente câmeras em manutenção.
-- Cada câmera aparece com botão **Verificar**, abrindo o fluxo de manutenção já existente.
-- Mantidas as regras de manutenção por item reprovado, aprovação direta após correção e condenação do equipamento.
+- Corrige o erro ao abrir a rota `/maintenance`.
+- Remove a chamada inexistente `render_camera_row`.
+- Cria uma lista específica para câmeras em manutenção.
+- Mostra o motivo principal da manutenção direto na lista.
+- Mantém o botão **Verificar** para resolver itens reprovados.
+- Mantém o fluxo de aprovação direta após manutenção ou condenação do equipamento.
+- Mantém o dossiê da câmera preservado.
 
-## Atualização
+## Deploy
 
-1. Copie os arquivos para a pasta GitHub `7sense-cm-cloud`.
-2. Commit: `v3.1.4 aba manutencao`.
+1. Copie os arquivos para o repositório GitHub.
+2. Commit: `v3.1.5 manutencao estabilizada`
 3. Push origin.
 4. Render: Manual Deploy > Clear build cache & deploy.

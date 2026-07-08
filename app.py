@@ -18,7 +18,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.1.4 Aba Manutenção"
+APP_VERSION = "3.1.5 Manutenção estabilizada"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -1291,16 +1291,39 @@ def maintenance_page():
                     LEFT JOIN contracts ON contracts.id=cameras.contract_id
                     LEFT JOIN clients ON clients.id=contracts.client_id
                     WHERE cameras.status=? AND cameras.demo=?
-                    ORDER BY COALESCE(clients.name,''), COALESCE(contracts.obra,''), cameras.code""", ("Em manutenção", current_demo_flag()))
+                    ORDER BY cameras.updated_at DESC, cameras.code""", ("Em manutenção", current_demo_flag()))
     total = len(rows)
-    items = "".join(render_camera_row(c) for c in rows) or "<p class='tag'>Nenhuma câmera em manutenção neste momento.</p>"
+
+    def maintenance_row(c):
+        failed = parse_failed_checklist(rv(c, 'tested_checklist', '') or '')
+        if failed:
+            reason = "; ".join([f"{f['item']}: {f['obs']}" if f.get('obs') else f['item'] for f in failed[:3]])
+            if len(failed) > 3:
+                reason += f"; +{len(failed)-3} item(ns)"
+        else:
+            reason = "Manutenção sem item reprovado vinculado"
+        code = escape(rv(c, 'code', '-') or '-')
+        cliente = escape(rv(c, 'client_name', 'Sem cliente / estoque') or 'Sem cliente / estoque')
+        obra = escape(rv(c, 'obra', 'Sem obra / estoque') or 'Sem obra / estoque')
+        local = escape(rv(c, 'current_location', '-') or '-')
+        updated = escape((rv(c, 'updated_at', '') or '')[:16].replace('T',' '))
+        return f"""<div class='row camera'>
+            <b>{code}</b>
+            <span><b>{cliente}</b><br><small>{obra}</small></span>
+            <span>{escape(reason)}</span>
+            <span>{local}<br><small>{updated}</small></span>
+            <span><span class='badge warn'>Em manutenção</span></span>
+            <span class='actions'><a class='btn small primary' href='{url_for('camera_maintenance', id=rv(c,'id'))}'>🔍 Verificar</a><a class='btn small' href='{url_for('camera_dossie', id=rv(c,'id'))}'>📑 Dossiê</a></span>
+        </div>"""
+
+    items = "".join(maintenance_row(c) for c in rows) or "<div class='card'><p class='tag'>Nenhuma câmera em manutenção neste momento.</p></div>"
     body = f"""<div class='panel'>
       <h2>🔧 Manutenção</h2>
-      <p class='tag'>Câmeras que foram reprovadas no teste ou encaminhadas para manutenção. Clique em <b>Verificar</b> para analisar os itens reprovados, aprovar após correção ou condenar o equipamento.</p>
+      <p class='tag'>Câmeras reprovadas no controle de qualidade ou encaminhadas para reparo. O motivo principal já aparece na lista; clique em <b>Verificar</b> para resolver os itens, aprovar a câmera ou condenar o equipamento.</p>
       <div class='grid' style='margin:14px 0'>
         <a class='card metric' href='{url_for('cameras', status='Em manutenção')}'><h3>Câmeras em manutenção</h3><b>{total}</b></a>
       </div>
-      <div class='row camera' style='color:#8da0ba;font-weight:700'><span>Câmera</span><span>Cliente / Obra</span><span>Local</span><span>Serviço</span><span>Status</span><span>Ações</span></div>
+      <div class='row camera' style='color:#8da0ba;font-weight:700'><span>Câmera</span><span>Cliente / Obra</span><span>Motivo</span><span>Local / Data</span><span>Status</span><span>Ações</span></div>
       {items}
     </div>"""
     return page(body, breadcrumb="Dashboard > Manutenção")
