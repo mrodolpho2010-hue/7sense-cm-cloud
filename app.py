@@ -711,7 +711,7 @@ def camera_row(c, user_role=None):
         occ_badge = ""
     qr_btn = f"<a class='btn small' href='{url_for('camera_qr', id=cam_id)}'>📷 QR</a>"
     dossier_btn = f"<a class='btn small' href='{url_for('camera_dossie', id=cam_id)}'>📑 Dossiê</a>"
-    test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=cam_id)}'>🧪 Teste</a>" if (user_role or (current_user()['role'] if current_user() else None))=='operacao' else ""
+    test_btn = f"<a class='btn small' href='{url_for('camera_approve', id=cam_id)}'>🧪 Testar</a>" if (user_role or (current_user()['role'] if current_user() else None))=='operacao' else ""
     edit_btns = (f"<a class='btn small' href='{url_for('camera_edit', id=cam_id)}'>Editar</a> <a class='btn small' href='{url_for('camera_transfer', id=cam_id)}'>Transferir</a>") if (user_role or (current_user()['role'] if current_user() else None))=='operacao' else ""
     cliente = rv(c, 'client_name', '-') or '-'
     obra = rv(c, 'obra', '-') or '-'
@@ -882,6 +882,8 @@ def camera_view(id):
     inutilizar_action = ""
     if current_user()["role"] == "operacao" and c["status"] != "Inutilizada":
         inutilizar_action = f"<a class='btn danger' href='{url_for('camera_inutilizar', id=c['id'])}'>🚫 Inutilizar</a>"
+    if current_user()["role"] == "operacao" and c["status"] == "Em manutenção":
+        inutilizar_action += f"<a class='btn' href='{url_for('camera_maintenance', id=c['id'])}'>🔧 Manutenção</a>"
     body = f"""<div class="panel"><h2>{c['code']}</h2><p><span class="badge {status_class(c['status'])}">{c['status']}</span></p><p>Cliente/Obra: {c['client_name'] or '-'} / {c['obra'] or '-'}</p><p>Local: {c['current_location'] or '-'}</p><p>Serviço: {c['service'] or '-'}</p>{f"<p><b>Última foto da instalação:</b><br><img src='{rv(c, 'last_install_photo', '')}' alt='Foto da instalação' style='max-width:320px;border-radius:14px;border:1px solid #dbe3ef;margin-top:8px'></p>" if rv(c, 'last_install_photo', '') else ''}<div class="actions"><a class="btn" href="{url_for('cameras')}">Voltar</a><a class="btn" href="{url_for('camera_qr', id=c['id'])}">📷 Gerar QR</a><a class="btn" href="{url_for('camera_dossie', id=c['id'])}">📑 Dossiê</a>{inutilizar_action}{('<a class=\"btn primary\" href=\"'+url_for('camera_transfer', id=c['id'])+'\">Transferir</a><a class=\"btn\" href=\"'+url_for('occurrence_new', camera_id=c['id'])+'\">Abrir ocorrência</a>' + ('<a class=\"btn\" href=\"'+url_for('camera_receive_central', id=c['id'])+'\">🏢 Recebida na central</a>' if c['status']=='Em retorno' else '<a class=\"btn\" href=\"'+url_for('camera_authorize_removal', id=c['id'])+'\">🔓 Autorizar retirada</a>')) if current_user()['role']=='operacao' else ''}</div></div>
     {active_occ_callout}
     <div class="panel"><h2>Histórico</h2>{hist_html or '<p>Sem histórico.</p>'}</div>
@@ -1137,19 +1139,121 @@ def camera_approve(id):
     if not c:
         flash("Câmera não encontrada.")
         return redirect(url_for("cameras"))
-    checklist_items = ["Carregada", "Cartão SD verificado", "Limpeza realizada", "Teste de imagem OK", "Teste de comunicação OK", "Estado físico OK"]
+    checklist_items = [
+        "Carregada",
+        "Cartão SD verificado",
+        "Limpeza realizada",
+        "Teste de imagem",
+        "Teste de comunicação",
+        "Estado físico",
+    ]
     if request.method == "POST":
-        checked = [i for i in checklist_items if request.form.get(i)]
-        note = request.form.get("note", "")
-        checklist = "; ".join(checked) + ((" | " + note) if note else "")
+        action = request.form.get("action", "approve")
+        results = []
+        rejected = []
+        notes_by_item = []
+        for item in checklist_items:
+            result = request.form.get(f"result_{item}", "").strip()
+            obs = request.form.get(f"obs_{item}", "").strip()
+            if result not in ("Aprovado", "Reprovado"):
+                flash(f"Informe Aprovado ou Reprovado para: {item}")
+                return redirect(url_for("camera_approve", id=id))
+            results.append(f"{item}: {result}" + ((f" ({obs})") if obs else ""))
+            if result == "Reprovado":
+                rejected.append(item)
+                if not obs:
+                    flash(f"Descreva o problema no item reprovado: {item}")
+                    return redirect(url_for("camera_approve", id=id))
+                notes_by_item.append(f"{item}: {obs}")
+        note = request.form.get("note", "").strip()
+        checklist = "; ".join(results) + ((" | Observações gerais: " + note) if note else "")
         old_status = c["status"]
-        execute("UPDATE cameras SET status=?, patrimonial_status=?, tested_approved_at=?, tested_checklist=?, updated_at=? WHERE id=?", ("Testada e aprovada", "Em estoque", datetime.now().isoformat(), checklist, datetime.now().isoformat(), id))
-        execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Testada e aprovada", "Checklist: " + checklist, current_user()["name"], datetime.now().isoformat()))
+        now = datetime.now().isoformat()
+        if rejected:
+            if action != "maintenance":
+                flash("Existem itens reprovados. Envie a câmera para manutenção.")
+                return redirect(url_for("camera_approve", id=id))
+            manut_note = "Teste reprovado. Itens reprovados: " + "; ".join(notes_by_item)
+            if note:
+                manut_note += " | Observações gerais: " + note
+            execute("UPDATE cameras SET status=?, patrimonial_status=?, tested_checklist=?, notes=?, updated_at=? WHERE id=?", ("Em manutenção", "Em manutenção", checklist, (((c["notes"] or "") + "\n" + manut_note).strip()), now, id))
+            execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Em manutenção", manut_note, current_user()["name"], now))
+            flash("Teste reprovado. Câmera enviada para manutenção.")
+            return redirect(url_for("camera_maintenance", id=id))
+        if action == "maintenance":
+            flash("Nenhum item foi reprovado. Para enviar à manutenção, marque ao menos um item como reprovado.")
+            return redirect(url_for("camera_approve", id=id))
+        execute("UPDATE cameras SET status=?, patrimonial_status=?, tested_approved_at=?, tested_checklist=?, updated_at=? WHERE id=?", ("Testada e aprovada", "Em estoque", now, checklist, now, id))
+        execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Testada e aprovada", "Checklist aprovado: " + checklist, current_user()["name"], now))
         flash("Câmera testada e aprovada para novo envio.")
         return redirect(url_for("camera_view", id=id))
-    boxes = "".join([f"<label><input type='checkbox' name='{item}' value='1'> {item}</label><br>" for item in checklist_items])
-    body = f"""<div class='panel'><h2>🧪 Testar e Aprovar {c['code']}</h2><p>Use este checklist quando a câmera retornar de obra ou antes de liberar para novo cliente.</p><form method='post' class='formgrid'><div class='full card'>{boxes}</div><label class='full'>Observações<textarea name='note' placeholder='Ex.: bateria ok, lente limpa, cartão substituído...'></textarea></label><div class='full'><button class='primary'>Aprovar câmera</button></div></form></div>"""
+    rows = []
+    for item in checklist_items:
+        safe = item.replace("'", "&#39;")
+        rows.append(f"""
+        <div class='card' style='margin-bottom:10px'>
+          <h3 style='margin-top:0'>{item}</h3>
+          <label style='display:inline-block;margin-right:18px'><input type='radio' name='result_{safe}' value='Aprovado' required> ✅ Aprovado</label>
+          <label style='display:inline-block'><input type='radio' name='result_{safe}' value='Reprovado' required> ❌ Reprovado</label>
+          <textarea name='obs_{safe}' placeholder='Se reprovar este item, descreva o problema encontrado.' style='margin-top:10px'></textarea>
+        </div>""")
+    boxes = "".join(rows)
+    body = f"""<div class='panel'><h2>🧪 Testar câmera {c['code']}</h2>
+    <p class='tag'>Marque cada item como aprovado ou reprovado. Se algum item for reprovado, descreva o motivo e envie a câmera para manutenção.</p>
+    <form method='post' class='formgrid'>
+      <div class='full'>{boxes}</div>
+      <label class='full'>Observações gerais<textarea name='note' placeholder='Ex.: bateria ok, lente limpa, cartão substituído...'></textarea></label>
+      <div class='full actions'>
+        <button class='primary' name='action' value='approve'>✅ Aprovar câmera</button>
+        <button class='danger' name='action' value='maintenance'>🔧 Enviar para manutenção</button>
+        <a class='btn' href='{url_for('camera_view', id=id)}'>Cancelar</a>
+      </div>
+    </form></div>"""
     return page(body, breadcrumb=f"Dashboard > Câmeras > Teste {c['code']}")
+
+
+@app.route("/cameras/<int:id>/maintenance", methods=["GET", "POST"])
+@operacao_required
+def camera_maintenance(id):
+    c = one("SELECT * FROM cameras WHERE id=?", (id,))
+    if not c:
+        flash("Câmera não encontrada.")
+        return redirect(url_for("cameras"))
+    if request.method == "POST":
+        action = request.form.get("action")
+        details = request.form.get("details", "").strip()
+        now = datetime.now().isoformat()
+        old_status = c["status"]
+        if action == "completed":
+            note = "Manutenção concluída. Câmera deve retornar para teste." + ((" Serviços realizados: " + details) if details else "")
+            execute("UPDATE cameras SET status=?, patrimonial_status=?, notes=?, updated_at=? WHERE id=?", ("Aguardando teste", "Em estoque", (((c["notes"] or "") + "\n" + note).strip()), now, id))
+            execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Aguardando teste", note, current_user()["name"], now))
+            flash("Manutenção concluída. A câmera voltou para Aguardando teste.")
+            return redirect(url_for("camera_view", id=id))
+        if action == "condemn":
+            if not details:
+                flash("Informe o motivo para condenar o equipamento.")
+                return redirect(url_for("camera_maintenance", id=id))
+            note = "Equipamento condenado pela manutenção. Motivo: " + details
+            execute("UPDATE cameras SET status=?, patrimonial_status=?, notes=?, updated_at=? WHERE id=?", ("Inutilizada", "Inutilizada", (((c["notes"] or "") + "\n" + note).strip()), now, id))
+            execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Inutilizada", note, current_user()["name"], now))
+            flash("Câmera condenada e marcada como inutilizada. O dossiê foi preservado.")
+            return redirect(url_for("camera_dossie", id=id))
+    recent = query("SELECT * FROM camera_history WHERE camera_id=? ORDER BY created_at DESC LIMIT 6", (id,))
+    recent_html = "".join([f"<li><b>{rv(h,'created_at','')}</b><br>{rv(h,'note','')}</li>" for h in recent]) or "<li>Nenhum histórico encontrado.</li>"
+    body = f"""<div class='panel'><h2>🔧 Manutenção {c['code']}</h2>
+      <p><span class='badge warn'>{c['status']}</span></p>
+      <div class='card'><h3>Últimos registros</h3><ul>{recent_html}</ul></div>
+      <form method='post' class='formgrid'>
+        <label class='full'>Serviços realizados / motivo<textarea name='details' placeholder='Ex.: troca de cartão, limpeza de conector, substituição de cabo, placa sem reparo...'></textarea></label>
+        <div class='full actions'>
+          <button class='primary' name='action' value='completed'>✅ Manutenção concluída</button>
+          <button class='danger' name='action' value='condemn' onclick="return confirm('Confirmar condenação do equipamento?')">🚫 Condenar equipamento</button>
+          <a class='btn' href='{url_for('camera_view', id=id)}'>Cancelar</a>
+        </div>
+      </form>
+    </div>"""
+    return page(body, breadcrumb=f"Dashboard > Câmeras > Manutenção {c['code']}")
 
 
 @app.route("/cameras/<int:id>/transfer", methods=["GET", "POST"])

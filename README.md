@@ -1,24 +1,33 @@
-# 7Sense Operations Manager - v3.1.0
+# 7Sense Operations Manager v3.1.1
 
-## Dossiê da Câmera
+## Controle de Qualidade e Manutenção
 
-Esta versão adiciona o módulo de Dossiê da Câmera, mantendo a lógica operacional atual.
+Esta versão adiciona o fluxo completo de teste, reprovação, manutenção e condenação de câmeras.
 
 ### Incluído
 
-- Botão **📑 Dossiê** na lista de câmeras.
-- Botão **📑 Dossiê** na ficha da câmera.
-- Página completa do prontuário da câmera.
-- Linha do tempo completa de movimentações.
-- Histórico por obra/ciclo operacional.
-- Ocorrências ativas e arquivadas vinculadas à câmera.
-- Fotos de instalação/anexos no dossiê.
-- Dossiê disponível também para câmeras inutilizadas.
-- Histórico de vida preservado mesmo quando o ciclo atual é zerado.
+- Tela **🧪 Testar câmera** com itens aprovados/reprovados individualmente.
+- Itens do checklist:
+  - Carregada
+  - Cartão SD verificado
+  - Limpeza realizada
+  - Teste de imagem
+  - Teste de comunicação
+  - Estado físico
+- Se algum item for reprovado, é obrigatório informar a observação do problema.
+- Se houver reprovação, a câmera vai para **Em manutenção**.
+- Tela **🔧 Manutenção** com:
+  - últimos registros do histórico;
+  - campo para serviços realizados;
+  - botão **Manutenção concluída**;
+  - botão **Condenar equipamento**.
+- Manutenção concluída retorna a câmera para **Aguardando teste**.
+- Condenar equipamento envia a câmera para **Inutilizada**, preservando o dossiê.
+- Registros entram no histórico/dossiê da câmera.
 
 ### Atualização
 
-1. Copie todos os arquivos desta pasta para o repositório `7sense-cm-cloud`.
-2. Commit: `v3.1.0 dossie da camera`.
+1. Copie os arquivos desta pasta para a pasta GitHub `7sense-cm-cloud`.
+2. Commit: `v3.1.1 controle qualidade manutencao`
 3. Push origin.
-4. Render: Manual Deploy > Clear build cache & deploy.
+4. No Render: **Manual Deploy > Clear build cache & deploy**.
