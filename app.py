@@ -6,6 +6,7 @@ from flask import Flask, request, redirect, url_for, session, flash, jsonify, re
 from werkzeug.security import generate_password_hash, check_password_hash
 from io import BytesIO
 from urllib.parse import quote
+from html import escape
 import qrcode
 import base64
 from PIL import Image, ImageDraw, ImageFont
@@ -16,7 +17,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.1.0 Dossiê da Câmera"
+APP_VERSION = "3.1.2 Checklist inteligente"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -1139,6 +1140,7 @@ def camera_approve(id):
     if not c:
         flash("Câmera não encontrada.")
         return redirect(url_for("cameras"))
+
     checklist_items = [
         "Carregada",
         "Cartão SD verificado",
@@ -1147,32 +1149,99 @@ def camera_approve(id):
         "Teste de comunicação",
         "Estado físico",
     ]
+
+    def render_checklist(form_data=None, field_errors=None, summary_errors=None):
+        form_data = form_data or {}
+        field_errors = field_errors or {}
+        summary_errors = summary_errors or []
+        answered = sum(1 for item in checklist_items if form_data.get(f"result_{item}") in ("Aprovado", "Reprovado"))
+        progress = int((answered / len(checklist_items)) * 100)
+        pending_html = ""
+        if summary_errors:
+            pending_html = "<div class='card' style='border:1px solid #ef4444;background:rgba(239,68,68,.12);color:#fecaca'><b>Não foi possível concluir o teste.</b><ul>" + "".join(f"<li>{escape(e)}</li>" for e in summary_errors) + "</ul></div>"
+
+        rows = []
+        for item in checklist_items:
+            result = form_data.get(f"result_{item}", "")
+            obs = form_data.get(f"obs_{item}", "")
+            err = field_errors.get(item, "")
+            border = "border:1px solid #ef4444;background:rgba(239,68,68,.10)" if err else ""
+            safe_item = escape(item)
+            obs_safe = escape(obs)
+            approved_checked = "checked" if result == "Aprovado" else ""
+            rejected_checked = "checked" if result == "Reprovado" else ""
+            err_html = f"<p style='color:#fca5a5;margin:8px 0 0'><b>⚠ {escape(err)}</b></p>" if err else ""
+            rows.append(f"""
+            <div class='card' style='margin-bottom:10px;{border}' id='item-{escape(item).replace(' ', '-')}' >
+              <h3 style='margin-top:0'>{safe_item}</h3>
+              <label style='display:inline-block;margin-right:18px'>
+                <input type='radio' name='result_{safe_item}' value='Aprovado' required {approved_checked}> ✅ Aprovado
+              </label>
+              <label style='display:inline-block'>
+                <input type='radio' name='result_{safe_item}' value='Reprovado' required {rejected_checked}> ❌ Reprovado
+              </label>
+              <textarea name='obs_{safe_item}' placeholder='Se reprovar este item, descreva o problema encontrado.' style='margin-top:10px'>{obs_safe}</textarea>
+              {err_html}
+            </div>""")
+        boxes = "".join(rows)
+        note_value = escape(form_data.get("note", ""))
+        body = f"""<div class='panel'><h2>🧪 Testar câmera {escape(c['code'])}</h2>
+        <p class='tag'>Marque cada item como aprovado ou reprovado. Se algum item for reprovado, descreva o motivo e envie a câmera para manutenção.</p>
+        <div class='card' style='margin-bottom:14px'>
+          <b>Checklist</b>
+          <div style='height:10px;background:rgba(148,163,184,.25);border-radius:999px;overflow:hidden;margin:10px 0'>
+            <div style='height:10px;width:{progress}%;background:#22c55e'></div>
+          </div>
+          <span class='muted'>{answered} de {len(checklist_items)} itens avaliados</span>
+        </div>
+        {pending_html}
+        <form method='post' class='formgrid'>
+          <div class='full'>{boxes}</div>
+          <label class='full'>Observações gerais<textarea name='note' placeholder='Ex.: bateria ok, lente limpa, cartão substituído...'>{note_value}</textarea></label>
+          <div class='full actions'>
+            <button class='primary' name='action' value='approve'>✅ Aprovar câmera</button>
+            <button class='danger' name='action' value='maintenance'>🔧 Enviar para manutenção</button>
+            <a class='btn' href='{url_for('camera_view', id=id)}'>Cancelar</a>
+          </div>
+        </form></div>"""
+        return page(body, breadcrumb=f"Dashboard > Câmeras > Teste {escape(c['code'])}")
+
     if request.method == "POST":
         action = request.form.get("action", "approve")
         results = []
         rejected = []
         notes_by_item = []
+        field_errors = {}
+        summary_errors = []
+        form_data = {k: v for k, v in request.form.items()}
+
         for item in checklist_items:
             result = request.form.get(f"result_{item}", "").strip()
             obs = request.form.get(f"obs_{item}", "").strip()
             if result not in ("Aprovado", "Reprovado"):
-                flash(f"Informe Aprovado ou Reprovado para: {item}")
-                return redirect(url_for("camera_approve", id=id))
+                field_errors[item] = "Informe se este item foi aprovado ou reprovado."
+                summary_errors.append(f"{item} não avaliado.")
+                continue
             results.append(f"{item}: {result}" + ((f" ({obs})") if obs else ""))
             if result == "Reprovado":
                 rejected.append(item)
                 if not obs:
-                    flash(f"Descreva o problema no item reprovado: {item}")
-                    return redirect(url_for("camera_approve", id=id))
-                notes_by_item.append(f"{item}: {obs}")
+                    field_errors[item] = "Obrigatório informar o motivo da reprovação."
+                    summary_errors.append(f"{item} reprovado sem observação.")
+                else:
+                    notes_by_item.append(f"{item}: {obs}")
+
+        if field_errors:
+            return render_checklist(form_data, field_errors, summary_errors)
+
         note = request.form.get("note", "").strip()
         checklist = "; ".join(results) + ((" | Observações gerais: " + note) if note else "")
         old_status = c["status"]
         now = datetime.now().isoformat()
         if rejected:
             if action != "maintenance":
-                flash("Existem itens reprovados. Envie a câmera para manutenção.")
-                return redirect(url_for("camera_approve", id=id))
+                summary_errors.append("Existem itens reprovados. Use a opção Enviar para manutenção.")
+                return render_checklist(form_data, {}, summary_errors)
             manut_note = "Teste reprovado. Itens reprovados: " + "; ".join(notes_by_item)
             if note:
                 manut_note += " | Observações gerais: " + note
@@ -1181,36 +1250,14 @@ def camera_approve(id):
             flash("Teste reprovado. Câmera enviada para manutenção.")
             return redirect(url_for("camera_maintenance", id=id))
         if action == "maintenance":
-            flash("Nenhum item foi reprovado. Para enviar à manutenção, marque ao menos um item como reprovado.")
-            return redirect(url_for("camera_approve", id=id))
+            summary_errors.append("Nenhum item foi reprovado. Para enviar à manutenção, marque ao menos um item como reprovado.")
+            return render_checklist(form_data, {}, summary_errors)
         execute("UPDATE cameras SET status=?, patrimonial_status=?, tested_approved_at=?, tested_checklist=?, updated_at=? WHERE id=?", ("Testada e aprovada", "Em estoque", now, checklist, now, id))
         execute("INSERT INTO camera_history(camera_id,old_location,new_location,old_status,new_status,note,user_name,created_at) VALUES(?,?,?,?,?,?,?,?)", (id, c["current_location"], c["current_location"], old_status, "Testada e aprovada", "Checklist aprovado: " + checklist, current_user()["name"], now))
         flash("Câmera testada e aprovada para novo envio.")
         return redirect(url_for("camera_view", id=id))
-    rows = []
-    for item in checklist_items:
-        safe = item.replace("'", "&#39;")
-        rows.append(f"""
-        <div class='card' style='margin-bottom:10px'>
-          <h3 style='margin-top:0'>{item}</h3>
-          <label style='display:inline-block;margin-right:18px'><input type='radio' name='result_{safe}' value='Aprovado' required> ✅ Aprovado</label>
-          <label style='display:inline-block'><input type='radio' name='result_{safe}' value='Reprovado' required> ❌ Reprovado</label>
-          <textarea name='obs_{safe}' placeholder='Se reprovar este item, descreva o problema encontrado.' style='margin-top:10px'></textarea>
-        </div>""")
-    boxes = "".join(rows)
-    body = f"""<div class='panel'><h2>🧪 Testar câmera {c['code']}</h2>
-    <p class='tag'>Marque cada item como aprovado ou reprovado. Se algum item for reprovado, descreva o motivo e envie a câmera para manutenção.</p>
-    <form method='post' class='formgrid'>
-      <div class='full'>{boxes}</div>
-      <label class='full'>Observações gerais<textarea name='note' placeholder='Ex.: bateria ok, lente limpa, cartão substituído...'></textarea></label>
-      <div class='full actions'>
-        <button class='primary' name='action' value='approve'>✅ Aprovar câmera</button>
-        <button class='danger' name='action' value='maintenance'>🔧 Enviar para manutenção</button>
-        <a class='btn' href='{url_for('camera_view', id=id)}'>Cancelar</a>
-      </div>
-    </form></div>"""
-    return page(body, breadcrumb=f"Dashboard > Câmeras > Teste {c['code']}")
 
+    return render_checklist()
 
 @app.route("/cameras/<int:id>/maintenance", methods=["GET", "POST"])
 @operacao_required

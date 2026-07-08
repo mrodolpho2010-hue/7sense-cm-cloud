@@ -1,33 +1,21 @@
-# 7Sense Operations Manager v3.1.1
+# 7Sense Operations Manager - v3.1.2
 
-## Controle de Qualidade e Manutenção
+## Checklist inteligente
 
-Esta versão adiciona o fluxo completo de teste, reprovação, manutenção e condenação de câmeras.
+Esta versão melhora a tela de teste da câmera:
 
-### Incluído
+- Mantém os itens já marcados quando houver erro de validação.
+- Mantém as observações já preenchidas.
+- Destaca em vermelho somente o item pendente.
+- Mostra resumo de pendências.
+- Adiciona barra de progresso do checklist.
+- Mantém o fluxo aprovado/reprovado:
+  - Todos aprovados: câmera vai para **Testada e aprovada**.
+  - Qualquer item reprovado: câmera vai para **Em manutenção**.
 
-- Tela **🧪 Testar câmera** com itens aprovados/reprovados individualmente.
-- Itens do checklist:
-  - Carregada
-  - Cartão SD verificado
-  - Limpeza realizada
-  - Teste de imagem
-  - Teste de comunicação
-  - Estado físico
-- Se algum item for reprovado, é obrigatório informar a observação do problema.
-- Se houver reprovação, a câmera vai para **Em manutenção**.
-- Tela **🔧 Manutenção** com:
-  - últimos registros do histórico;
-  - campo para serviços realizados;
-  - botão **Manutenção concluída**;
-  - botão **Condenar equipamento**.
-- Manutenção concluída retorna a câmera para **Aguardando teste**.
-- Condenar equipamento envia a câmera para **Inutilizada**, preservando o dossiê.
-- Registros entram no histórico/dossiê da câmera.
+## Atualização
 
-### Atualização
-
-1. Copie os arquivos desta pasta para a pasta GitHub `7sense-cm-cloud`.
-2. Commit: `v3.1.1 controle qualidade manutencao`
+1. Copie os arquivos desta pasta para o repositório GitHub `7sense-cm-cloud`.
+2. Commit: `v3.1.2 checklist inteligente`.
 3. Push origin.
-4. No Render: **Manual Deploy > Clear build cache & deploy**.
+4. Render: Manual Deploy > Clear build cache & deploy.
