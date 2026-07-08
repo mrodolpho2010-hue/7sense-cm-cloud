@@ -1,17 +1,20 @@
-# 7Sense CM Cloud - v3.1.10
+# 7Sense Operations Manager — v3.2.0
 
-## Otimização do Dashboard
+## Ciclo de vida dos contratos
 
-Correções principais:
+Esta versão adiciona a gestão completa de encerramento de contratos.
 
-- Dashboard otimizado para evitar timeout no Render/Supabase.
-- Contagens de câmeras por status agora usam consulta agrupada.
-- Mantém alertas de vencimento de contratos da v3.1.9.
-- Reduz quantidade de conexões e consultas ao banco na tela inicial.
+### Incluído
+- Botão **Encerrar contrato** na ficha do contrato.
+- Tela de encerramento com data, motivo e observações.
+- Validação para impedir encerramento com câmeras vinculadas ou ocorrências abertas.
+- Aba/filtro para **Contratos Encerrados**.
+- Filtros de contratos: Ativos, Vence em 60d, Vence em 30d, Vencidos e Encerrados.
+- Opção para criar novo contrato baseado em contrato encerrado.
+- Migração automática dos campos de encerramento no banco.
 
-## Deploy
-
+### Atualização
 1. Copie os arquivos para a pasta do GitHub.
-2. Commit: `v3.1.10 otimizacao dashboard`
+2. Commit: `v3.2.0 ciclo vida contratos`.
 3. Push origin.
 4. Render: Manual Deploy > Clear build cache & deploy.

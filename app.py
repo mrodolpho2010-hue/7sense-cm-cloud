@@ -18,7 +18,7 @@ try:
 except Exception:  # Ambiente local sem PostgreSQL instalado
     psycopg = None
 
-APP_VERSION = "3.1.10 Otimização do Dashboard"
+APP_VERSION = "3.2.0 Ciclo de vida dos contratos"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -124,6 +124,17 @@ def init_db():
     execute("""CREATE TABLE IF NOT EXISTS contracts(
         id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, client_id INTEGER, obra TEXT, city TEXT, state TEXT, start_date TEXT, end_date TEXT, expected_cameras INTEGER DEFAULT 0, status TEXT, notes TEXT, demo INTEGER DEFAULT 0, created_at TEXT
     )""")
+    # V3.2.0: ciclo de vida do contrato e encerramento operacional
+    for col in [
+        "closed_at TEXT",
+        "closed_reason TEXT",
+        "closed_notes TEXT",
+        "closed_by TEXT",
+    ]:
+        try:
+            execute(f"ALTER TABLE contracts ADD COLUMN {col}")
+        except Exception:
+            pass
     execute("""CREATE TABLE IF NOT EXISTS cameras(
         id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, model TEXT, serial TEXT, contract_id INTEGER, current_location TEXT, service TEXT, status TEXT, notes TEXT, demo INTEGER DEFAULT 0, updated_at TEXT, created_at TEXT
     )""")
@@ -714,21 +725,42 @@ def client_form(r=None):
 @login_required
 def contracts():
     status = request.args.get("status", "Todos")
+    df = current_demo_flag()
+    today = date.today().isoformat()
+    d30 = (date.today()+timedelta(days=30)).isoformat()
+    d60 = (date.today()+timedelta(days=60)).isoformat()
     if status == "Todos":
         q = "WHERE c.demo=?"
-        params = (current_demo_flag(),)
+        params = (df,)
+    elif status == "Ativos":
+        q = "WHERE c.demo=? AND c.status!='Encerrado'"
+        params = (df,)
+    elif status == "Vencidos":
+        q = "WHERE c.demo=? AND c.status!='Encerrado' AND c.end_date IS NOT NULL AND c.end_date!='' AND c.end_date < ?"
+        params = (df, today)
+    elif status == "Vence em 30d":
+        q = "WHERE c.demo=? AND c.status!='Encerrado' AND c.end_date IS NOT NULL AND c.end_date!='' AND c.end_date >= ? AND c.end_date <= ?"
+        params = (df, today, d30)
+    elif status == "Vence em 60d":
+        q = "WHERE c.demo=? AND c.status!='Encerrado' AND c.end_date IS NOT NULL AND c.end_date!='' AND c.end_date > ? AND c.end_date <= ?"
+        params = (df, d30, d60)
+    elif status == "Encerrados":
+        q = "WHERE c.demo=? AND c.status='Encerrado'"
+        params = (df,)
     else:
         q = "WHERE c.demo=? AND c.status=?"
-        params = (current_demo_flag(), status)
+        params = (df, status)
     rows = query(f"SELECT c.*, cl.name client_name, (SELECT COUNT(*) FROM cameras ca WHERE ca.contract_id=c.id AND ca.demo=c.demo) cam_count FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id {q} ORDER BY c.created_at DESC", params)
     can_edit = current_user()["role"] == "operacao"
-    filters = "".join([f"<a class='{ 'active' if status==s else ''}' href='{url_for('contracts', status=s)}'>{s}</a>" for s in ["Todos"]+STATUS_CONTRATO])
+    filter_names = ["Todos", "Ativos", "Vence em 60d", "Vence em 30d", "Vencidos", "Encerrados"]
+    filters = "".join([f"<a class='{ 'active' if status==s else ''}' href='{url_for('contracts', status=s)}'>{s}</a>" for s in filter_names])
     items = ""
     for r in rows:
         prazo_txt, prazo_cls, _ = contract_deadline_info(r)
         prazo_badge = f"<br><span class='badge {prazo_cls}'>{prazo_txt}</span>"
-        items += f"<div class='row'><b>{r['client_name'] or 'Sem cliente'}<br><small>{r['obra'] or ''}</small></b><span>{r['city'] or ''}/{r['state'] or ''}</span><span>{r['cam_count']} câmeras</span><span><span class='badge {status_class(r['status'])}'>{r['status']}</span>{prazo_badge}</span><span class='actions'><a class='btn small' href='{url_for('contract_view', id=r['id'])}'>Ver</a>{('<a class=\"btn small\" href=\"'+url_for('contract_edit', id=r['id'])+'\">Editar</a>') if can_edit else ''}</span></div>"
-    body = f"<div class='panel'><div class='actions'><h2 style='flex:1'>Contratos</h2>{'<a class=\"btn primary\" href=\"'+url_for('contract_new')+'\">Novo contrato</a>' if can_edit else ''}</div><div class='filters'>{filters}</div>{items or '<p>Nenhum contrato.</p>'}</div>"
+        closed_txt = f"<br><small>Encerrado em {(rv(r,'closed_at','') or '')[:10]} · {rv(r,'closed_reason','')}</small>" if rv(r,'status')=='Encerrado' else ''
+        items += f"<div class='row'><b>{r['client_name'] or 'Sem cliente'}<br><small>{r['obra'] or ''}</small></b><span>{r['city'] or ''}/{r['state'] or ''}</span><span>{r['cam_count']} câmeras</span><span><span class='badge {status_class(r['status'])}'>{r['status']}</span>{prazo_badge}{closed_txt}</span><span class='actions'><a class='btn small' href='{url_for('contract_view', id=r['id'])}'>Ver</a>{('<a class="btn small" href="'+url_for('contract_edit', id=r['id'])+'">Editar</a>') if can_edit and r['status']!='Encerrado' else ''}</span></div>"
+    body = f"<div class='panel'><div class='actions'><h2 style='flex:1'>Contratos</h2>{'<a class="btn primary" href="'+url_for('contract_new')+'">Novo contrato</a>' if can_edit else ''}</div><div class='filters'>{filters}</div>{items or '<p>Nenhum contrato.</p>'}</div>"
     return page(body, breadcrumb="Dashboard > Contratos")
 
 
@@ -793,10 +825,63 @@ def contract_view(id):
     body = f"""<div class="panel"><h2>{r['client_name']} – {r['obra']}</h2><p><span class="badge {status_class(r['status'])}">{r['status']}</span> {prazo_extra} · {r['city']}/{r['state']}</p>
     <p class='tag'><b>Início:</b> {r['start_date'] or '-'} · <b>Fim:</b> {r['end_date'] or '-'} · <b>Controle:</b> 60 dias amarelo, 30 dias laranja e vencido vermelho.</p>
     <div class='grid' style='margin:14px 0'><div class='metric'><h3>Câmeras previstas</h3><b>{expected}</b></div><div class='metric'><h3>Vinculadas</h3><b>{linked}</b></div><div class='metric'><h3>Vagas disponíveis</h3><b>{slots}</b></div></div>
-    <div class="actions"><a class="btn" href="{url_for('contracts')}">Voltar</a>{link_btn}</div></div>
+    <div class="actions"><a class="btn" href="{url_for('contracts')}">Voltar</a>{link_btn}{('<a class="btn danger" href="'+url_for('contract_close', id=r['id'])+'">Encerrar contrato</a>') if current_user()['role']=='operacao' and r['status']!='Encerrado' else ''}{('<a class="btn" href="'+url_for('contract_renew', id=r['id'])+'">Criar novo contrato baseado neste</a>') if current_user()['role']=='operacao' and r['status']=='Encerrado' else ''}</div></div>
     <div class="panel"><h2>Câmeras vinculadas ao contrato</h2>{items or '<p>Nenhuma câmera vinculada a este contrato.</p>'}</div>"""
     return page(body, breadcrumb=f"Dashboard > Contratos > {r['client_name']} {r['obra']}")
 
+
+
+@app.route("/contracts/<int:id>/close", methods=["GET", "POST"])
+@operacao_required
+def contract_close(id):
+    r = one("SELECT c.*, cl.name client_name FROM contracts c LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.id=?", (id,))
+    if not r:
+        flash("Contrato não encontrado.")
+        return redirect(url_for("contracts"))
+    linked = count("SELECT COUNT(*) FROM cameras WHERE contract_id=?", (id,))
+    open_occ = count("""SELECT COUNT(*) FROM occurrences o
+                        LEFT JOIN cameras ca ON ca.id=o.camera_id
+                        WHERE o.status IN ('Aberta','Em andamento') AND o.archived_at IS NULL
+                        AND (ca.contract_id=? OR o.archived_contract_id=?)""", (id, id))
+    if request.method == "POST":
+        if linked > 0 or open_occ > 0:
+            flash("Não é possível encerrar: existem câmeras vinculadas ou ocorrências abertas neste contrato.")
+            return redirect(url_for("contract_close", id=id))
+        closed_at = request.form.get("closed_at") or date.today().isoformat()
+        reason = request.form.get("closed_reason") or "Contrato concluído"
+        notes = request.form.get("closed_notes") or ""
+        execute("UPDATE contracts SET status='Encerrado', closed_at=?, closed_reason=?, closed_notes=?, closed_by=? WHERE id=?", (closed_at, reason, notes, current_user()["name"], id))
+        flash("Contrato encerrado com sucesso.")
+        return redirect(url_for("contract_view", id=id))
+    reasons = ["Contrato concluído", "Rescisão antecipada", "Cancelamento pelo cliente", "Renovação / novo contrato", "Outro"]
+    reason_opts = "".join([f"<option>{x}</option>" for x in reasons])
+    block = ""
+    if linked > 0 or open_occ > 0:
+        block = f"<div class='alert danger'><b>Atenção:</b> este contrato ainda possui {linked} câmera(s) vinculada(s) e {open_occ} ocorrência(s) aberta(s). Finalize as pendências antes de encerrar.</div>"
+    body = f"""<div class='panel'><h2>Encerrar contrato</h2>
+    <p><b>Cliente:</b> {rv(r,'client_name','-')}<br><b>Obra:</b> {rv(r,'obra','-')}<br><b>Status atual:</b> <span class='badge {status_class(rv(r,'status',''))}'>{rv(r,'status','')}</span></p>
+    {block}
+    <form method='post' class='formgrid'>
+      <label>Data de encerramento<input type='date' name='closed_at' value='{date.today().isoformat()}'></label>
+      <label>Motivo<select name='closed_reason'>{reason_opts}</select></label>
+      <label class='full'>Observações<textarea name='closed_notes' placeholder='Descreva o motivo ou pendências finais do encerramento'></textarea></label>
+      <div class='full actions'><a class='btn' href='{url_for('contract_view', id=id)}'>Voltar</a><button class='primary' {'disabled' if linked>0 or open_occ>0 else ''}>Confirmar encerramento</button></div>
+    </form></div>"""
+    return page(body, breadcrumb="Dashboard > Contratos > Encerrar")
+
+
+@app.route("/contracts/<int:id>/renew")
+@operacao_required
+def contract_renew(id):
+    r = one("SELECT * FROM contracts WHERE id=?", (id,))
+    if not r:
+        flash("Contrato não encontrado.")
+        return redirect(url_for("contracts"))
+    execute("""INSERT INTO contracts(code,client_id,obra,city,state,start_date,end_date,expected_cameras,status,notes,demo,created_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""", (contract_code(), rv(r,'client_id'), rv(r,'obra'), rv(r,'city'), rv(r,'state'), '', '', int(rv(r,'expected_cameras',0) or 0), 'Planejamento', f"Novo contrato baseado no {rv(r,'code','contrato anterior')}", current_demo_flag(), datetime.now().isoformat()))
+    new_id = count("SELECT MAX(id) FROM contracts WHERE demo=?", (current_demo_flag(),))
+    flash("Novo contrato criado a partir do contrato encerrado. Ajuste datas, valores e observações.")
+    return redirect(url_for("contract_edit", id=new_id))
 
 
 @app.route("/contracts/<int:id>/link-camera", methods=["GET", "POST"])
